@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="StreamDeck Studio & Simulator - Virtual Elgato Stream Deck with live widgets and customization">
+    <title>StreamDeck Simulator - Virtual Control Deck</title>
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="css/deck.css">
+    <link rel="stylesheet" href="css/studio.css">
+
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
+</head>
+<body>
+    <!-- Main Deck Container -->
+    <div id="deck-container"></div>
+
+    <!-- Loading Screen -->
+    <div id="loading-screen" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999;">
+        <div style="font-size: 64px; margin-bottom: 20px; animation: pulse 2s ease-in-out infinite;">🎮</div>
+        <div style="font-size: 24px; font-weight: 600; color: #ffffff; margin-bottom: 10px;">StreamDeck Simulator</div>
+        <div style="font-size: 14px; color: rgba(255, 255, 255, 0.5);">Loading virtual deck...</div>
+        <style>
+            @keyframes pulse {
+                0%, 100% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.1); opacity: 0.8; }
+            }
+        </style>
+    </div>
+
+    <!-- Utility Scripts -->
+    <script src="js/notification-manager.js"></script>
+    <script src="js/logger.js"></script>
+    <script src="js/cleanup-manager.js"></script>
+    <script src="js/performance-utils.js"></script>
+
+    <!-- Core Scripts -->
+    <script src="js/deck-core.js"></script>
+    <script src="js/actions.js"></script>
+    <script src="js/live-keys.js"></script>
+    <script src="js/profiles.js"></script>
+    <script src="js/studio-ui.js"></script>
+
+    <!-- Main Application Script -->
+    <script>
+        // Application Initialization
+        class StreamDeckApp {
+            constructor() {
+                this.deck = null;
+                this.actions = null;
+                this.liveKeys = null;
+                this.profiles = null;
+                this.studio = null;
+
+                this.init();
+            }
+
+            async init() {
+                try {
+                    // Initialize core deck engine
+                    this.deck = new StreamDeckCore('deck-container', {
+                        rows: 3,
+                        cols: 4,
+                        size: 'cyd',
+                        soundEnabled: true,
+                        hapticEnabled: true
+                    });
+
+                    // Initialize actions engine
+                    this.actions = new ActionsEngine(this.deck, {
+                        serverUrl: 'http://localhost:8765'
+                    });
+
+                    // Initialize live keys manager
+                    this.liveKeys = new LiveKeysManager(this.deck, this.actions);
+
+                    // Initialize profiles manager
+                    this.profiles = new ProfilesManager(this.deck, this.actions, this.liveKeys);
+
+                    // Initialize studio UI
+                    this.studio = new StudioUI(this.deck, this.actions, this.profiles, this.liveKeys);
+
+                    // Setup event listeners
+                    this.setupEventListeners();
+
+                    // Check server status
+                    await this.checkServerStatus();
+
+                    // Hide loading screen
+                    setTimeout(() => {
+                        const loadingScreen = document.getElementById('loading-screen');
+                        if (loadingScreen) {
+                            loadingScreen.style.opacity = '0';
+                            loadingScreen.style.transition = 'opacity 0.5s ease';
+                            setTimeout(() => loadingScreen.remove(), 500);
+                        }
+                    }, 1000);
+
+                    console.log('StreamDeck Simulator initialized successfully');
+
+                    // Register cleanup tasks
+                    if (window.globalCleanupManager) {
+                        globalCleanupManager.register(() => this.cleanup(), 'StreamDeckApp');
+                    }
+                } catch (error) {
+                    appLogger.error('Failed to initialize StreamDeck Simulator', { error: error.message });
+                    alert('Failed to initialize application. Please refresh the page.');
+                }
+            }
+
+            setupEventListeners() {
+                // Listen for button clicks
+                this.deck.container.addEventListener('buttonClick', (e) => {
+                    // Actions are handled by StudioUI based on mode
+                });
+
+                // Listen for profile events
+                this.deck.container.addEventListener('profile:profileLoaded', (e) => {
+                    console.log('Profile loaded:', e.detail.profile.name);
+                    this.showNotification('Profile Loaded', e.detail.profile.name);
+                });
+
+                // Listen for action events
+                this.deck.container.addEventListener('action:serverStatus', (e) => {
+                    appLogger.info('Companion server status changed', e.detail);
+                });
+
+                // Keyboard shortcuts
+                document.addEventListener('keydown', (e) => {
+                    // Ctrl/Cmd + E: Toggle Studio Mode
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+                        e.preventDefault();
+                        this.studio.toggleMode();
+                    }
+
+                    // Ctrl/Cmd + S: Save Profile
+                    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                        e.preventDefault();
+                        this.profiles.saveCurrentProfile();
+                        this.showNotification('Saved', 'Profile saved successfully');
+                    }
+
+                    // Escape: Close Inspector
+                    if (e.key === 'Escape' && this.studio.editorMode === 'studio') {
+                        this.studio.closeInspector();
+                    }
+                });
+
+                // Prevent context menu on buttons
+                this.deck.container.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                });
+
+                // Window resize handler
+                let resizeTimeout;
+                window.addEventListener('resize', () => {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(() => {
+                        // Re-render deck if needed
+                        console.log('Window resized');
+                    }, 250);
+                });
+
+                // Visibility change handler
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        console.log('App hidden - pausing updates');
+                        // Optionally pause some live widgets
+                    } else {
+                        console.log('App visible - resuming updates');
+                    }
+                });
+            }
+
+            async checkServerStatus() {
+                try {
+                    await this.actions.checkServerAvailability();
+
+                    if (this.actions.serverAvailable) {
+                        this.showNotification('Server Connected', 'Companion server is available');
+                    } else {
+                        console.log('Companion server not available - running in standalone mode');
+                    }
+                } catch (error) {
+                    appLogger.warn('Server check failed', { error: error.message });
+                }
+            }
+
+            showNotification(title, message) {
+                return notificationManager.show(title, message);
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            /**
+             * Complete cleanup - call on app shutdown
+             */
+            cleanup() {
+                console.log('🧹 Cleaning up StreamDeck components...');
+
+                try {
+                    // Stop live widgets
+                    if (this.liveKeys) {
+                        this.liveKeys.stopAll();
+                    }
+
+                    // Destroy actions engine
+                    if (this.actions) {
+                        this.actions.destroy();
+                    }
+
+                    // Clear deck
+                    if (this.deck) {
+                        this.deck.destroy();
+                    }
+
+                    notificationManager.destroy();
+                    appLogger.destroy();
+
+                    // Clear references
+                    this.deck = null;
+                    this.actions = null;
+                    this.liveKeys = null;
+                    this.profiles = null;
+                    this.studio = null;
+
+                    console.log('✅ Cleanup complete');
+                } catch (error) {
+                    console.error('Error during cleanup:', error);
+                }
+            }
+        }
+
+        // Initialize application when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                window.streamDeckApp = new StreamDeckApp();
+            });
+        } else {
+            window.streamDeckApp = new StreamDeckApp();
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (window.streamDeckApp) {
+                // Stop all live widgets
+                if (window.streamDeckApp.liveKeys) {
+                    window.streamDeckApp.liveKeys.stopAll();
+                }
+                // Clear intervals
+                if (window.streamDeckApp.deck) {
+                    window.streamDeckApp.deck.clear();
+                }
+            }
+        });
+
+        // Global error handler
+        window.addEventListener('error', (e) => {
+            appLogger.error('Unhandled browser error', {
+                message: e.message,
+                source: e.filename,
+                line: e.lineno
+            });
+        });
+
+        window.addEventListener('unhandledrejection', (e) => {
+            appLogger.error('Unhandled promise rejection', {
+                reason: e.reason instanceof Error ? e.reason.message : String(e.reason)
+            });
+        });
+
+        // Service Worker registration (for PWA support - optional)
+        if ('serviceWorker' in navigator) {
+            // Uncomment to enable PWA features
+            // navigator.serviceWorker.register('/sw.js').then(reg => {
+            //     console.log('Service Worker registered:', reg);
+            // }).catch(err => {
+            //     console.log('Service Worker registration failed:', err);
+            // });
+        }
+    </script>
+
+    <!-- Analytics placeholder (optional) -->
+    <!-- <script>
+        // Add your analytics code here if needed
+    </script> -->
+</body>
+</html>

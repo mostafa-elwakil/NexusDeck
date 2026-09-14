@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item *)",
+      "Bash(mpremote connect *)",
+      "WebSearch"
+    ]
+  }
+}

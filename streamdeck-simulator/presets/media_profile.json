@@ -1,0 +1,65 @@
+{
+  "name": "Media Control",
+  "size": "mini",
+  "rows": 2,
+  "cols": 3,
+  "buttons": [
+    {
+      "label": "Spotify",
+      "icon": "🎵",
+      "color": "#1db954",
+      "action": {
+        "type": "open_url",
+        "url": "https://open.spotify.com"
+      }
+    },
+    {
+      "label": "YouTube",
+      "icon": "📺",
+      "color": "#ff0000",
+      "action": {
+        "type": "open_url",
+        "url": "https://youtube.com"
+      }
+    },
+    {
+      "label": "VLC",
+      "icon": "🎥",
+      "color": "#ff8800",
+      "action": {
+        "type": "open_app",
+        "app": "vlc.exe"
+      }
+    },
+    {
+      "label": "",
+      "icon": "🕐",
+      "color": "#1a1a3e",
+      "action": null,
+      "widget": {
+        "type": "clock"
+      }
+    },
+    {
+      "label": "",
+      "icon": "⏱️",
+      "color": "#1a2e3e",
+      "action": null,
+      "widget": {
+        "type": "stopwatch"
+      }
+    },
+    {
+      "label": "",
+      "icon": "⏲️",
+      "color": "#2d2d6f",
+      "action": null,
+      "widget": {
+        "type": "timer",
+        "config": {
+          "duration": 300
+        }
+      }
+    }
+  ]
+}

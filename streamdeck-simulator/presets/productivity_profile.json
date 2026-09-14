@@ -1,0 +1,144 @@
+{
+  "name": "Productivity Suite",
+  "size": "classic",
+  "rows": 3,
+  "cols": 5,
+  "buttons": [
+    {
+      "label": "Gmail",
+      "icon": "📧",
+      "color": "#ea4335",
+      "action": {
+        "type": "open_url",
+        "url": "https://mail.google.com"
+      }
+    },
+    {
+      "label": "Calendar",
+      "icon": "📅",
+      "color": "#4285f4",
+      "action": {
+        "type": "open_url",
+        "url": "https://calendar.google.com"
+      }
+    },
+    {
+      "label": "Notion",
+      "icon": "📝",
+      "color": "#000000",
+      "action": {
+        "type": "open_url",
+        "url": "https://notion.so"
+      }
+    },
+    {
+      "label": "Slack",
+      "icon": "💬",
+      "color": "#4a154b",
+      "action": {
+        "type": "open_url",
+        "url": "https://slack.com"
+      }
+    },
+    {
+      "label": "",
+      "icon": "🕐",
+      "color": "#1a1a3e",
+      "action": null,
+      "widget": {
+        "type": "clock"
+      }
+    },
+    {
+      "label": "Chrome",
+      "icon": "🌐",
+      "color": "#4285f4",
+      "action": {
+        "type": "open_app",
+        "app": "chrome.exe"
+      }
+    },
+    {
+      "label": "Excel",
+      "icon": "📊",
+      "color": "#217346",
+      "action": {
+        "type": "open_app",
+        "app": "excel.exe"
+      }
+    },
+    {
+      "label": "Word",
+      "icon": "📄",
+      "color": "#2b579a",
+      "action": {
+        "type": "open_app",
+        "app": "winword.exe"
+      }
+    },
+    {
+      "label": "Teams",
+      "icon": "👥",
+      "color": "#6264a7",
+      "action": {
+        "type": "open_app",
+        "app": "teams.exe"
+      }
+    },
+    {
+      "label": "",
+      "icon": "📊",
+      "color": "#1a2e3e",
+      "action": null,
+      "widget": {
+        "type": "cpu_ram"
+      }
+    },
+    {
+      "label": "Screenshot",
+      "icon": "📸",
+      "color": "#1a1a2e",
+      "action": {
+        "type": "run_command",
+        "command": "snippingtool",
+        "shell": "cmd"
+      }
+    },
+    {
+      "label": "Calculator",
+      "icon": "🔢",
+      "color": "#2d2d5f",
+      "action": {
+        "type": "open_app",
+        "app": "calc.exe"
+      }
+    },
+    {
+      "label": "Notepad",
+      "icon": "📝",
+      "color": "#1a2e1a",
+      "action": {
+        "type": "open_app",
+        "app": "notepad.exe"
+      }
+    },
+    {
+      "label": "Task Manager",
+      "icon": "⚙️",
+      "color": "#3e1a1a",
+      "action": {
+        "type": "open_app",
+        "app": "taskmgr.exe"
+      }
+    },
+    {
+      "label": "",
+      "icon": "📅",
+      "color": "#1a3e2e",
+      "action": null,
+      "widget": {
+        "type": "date"
+      }
+    }
+  ]
+}

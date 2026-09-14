@@ -1,0 +1,121 @@
+{
+  "name": "DevOps Dashboard",
+  "size": "cyd",
+  "rows": 3,
+  "cols": 4,
+  "buttons": [
+    {
+      "label": "VS Code",
+      "icon": "💻",
+      "color": "#007acc",
+      "action": {
+        "type": "open_app",
+        "app": "code"
+      }
+    },
+    {
+      "label": "Terminal",
+      "icon": "⚡",
+      "color": "#1a1a2e",
+      "action": {
+        "type": "open_app",
+        "app": "wt.exe"
+      }
+    },
+    {
+      "label": "Docker Hub",
+      "icon": "🐳",
+      "color": "#2496ed",
+      "action": {
+        "type": "open_url",
+        "url": "http://localhost:9000"
+      }
+    },
+    {
+      "label": "GitHub",
+      "icon": "🐙",
+      "color": "#24292e",
+      "action": {
+        "type": "open_url",
+        "url": "https://github.com"
+      }
+    },
+    {
+      "label": "Localhost Check",
+      "icon": "🌐",
+      "color": "#2d5f4d",
+      "action": {
+        "type": "http_check",
+        "url": "http://localhost:3000"
+      }
+    },
+    {
+      "label": "Ping DNS",
+      "icon": "📡",
+      "color": "#1a3e2e",
+      "action": {
+        "type": "ping",
+        "host": "8.8.8.8"
+      }
+    },
+    {
+      "label": "",
+      "icon": "🕐",
+      "color": "#1a1a3e",
+      "action": null,
+      "widget": {
+        "type": "clock"
+      }
+    },
+    {
+      "label": "",
+      "icon": "📊",
+      "color": "#1a2e3e",
+      "action": null,
+      "widget": {
+        "type": "cpu_ram"
+      }
+    },
+    {
+      "label": "Docker PS",
+      "icon": "📋",
+      "color": "#1a2e3e",
+      "action": {
+        "type": "run_command",
+        "command": "docker ps",
+        "shell": "powershell",
+        "showOutput": true
+      }
+    },
+    {
+      "label": "Git Status",
+      "icon": "📝",
+      "color": "#2d2d5f",
+      "action": {
+        "type": "run_command",
+        "command": "git status",
+        "shell": "powershell",
+        "showOutput": true
+      }
+    },
+    {
+      "label": "Clear Logs",
+      "icon": "🗑️",
+      "color": "#3e1a1a",
+      "action": {
+        "type": "run_command",
+        "command": "Remove-Item logs\\*.log -Force",
+        "shell": "powershell"
+      }
+    },
+    {
+      "label": "",
+      "icon": "⏱️",
+      "color": "#2d4d6f",
+      "action": null,
+      "widget": {
+        "type": "uptime"
+      }
+    }
+  ]
+}
