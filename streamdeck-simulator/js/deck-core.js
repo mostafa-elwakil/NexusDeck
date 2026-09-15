@@ -71,7 +71,15 @@ class StreamDeckCore {
             }
         }
 
+        const plate = document.createElement('div');
+        plate.className = 'deck-plate';
+        plate.innerHTML = `
+            <span class="deck-logo">OpsDeck</span>
+            <span class="deck-model">${this.presets[this.config.size]?.name || 'Control Deck'}</span>
+        `;
+
         deckFrame.appendChild(buttonGrid);
+        deckFrame.appendChild(plate);
         this.container.appendChild(deckFrame);
     }
 

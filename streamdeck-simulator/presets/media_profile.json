@@ -32,6 +32,25 @@
       }
     },
     {
+      "label": "Rec Toggle",
+      "icon": "⏺️",
+      "color": "#ea4335",
+      "action": {
+        "type": "obs_control",
+        "operation": "toggle_recording"
+      }
+    },
+    {
+      "label": "Scene: Game",
+      "icon": "🎮",
+      "color": "#2496ed",
+      "action": {
+        "type": "obs_control",
+        "operation": "set_scene",
+        "scene": "Game"
+      }
+    },
+    {
       "label": "",
       "icon": "🕐",
       "color": "#1a1a3e",

@@ -39,6 +39,12 @@ A realistic 3D virtual Stream Deck simulator that runs entirely in the browser, 
    - التنقل بين الصفحات (Page Navigation)
    - سكربتات مخصصة (Custom Scripts)
 
+4. **إجراءات OBS Studio** / OBS Studio Actions:
+   - تغيير المشهد (Change Scene)
+   - بدء/إيقاف/تبديل التسجيل (Start/Stop/Toggle Recording)
+   - إظهار/إخفاء مصدر (Show/Hide Source)
+   - فحص حالة اتصال OBS (OBS Connection Status Check)
+
 ### 📊 الويدجت الحية / Live Widgets
 
 - **⏰ ساعة حية** / Live Clock (HH:MM:SS)
@@ -220,6 +226,71 @@ The Companion Server provides API endpoints for advanced actions.
 }
 ```
 
+#### `POST /api/obs-control`
+التحكم في OBS Studio / Control OBS Studio
+
+```json
+{
+  "operation": "set_scene",
+  "scene": "Game",
+  "host": "127.0.0.1",
+  "port": 4455,
+  "password": ""
+}
+```
+
+**العمليات المتاحة / Available operations:**
+
+| Operation | الوصف / Description | الحقول المطلوبة / Required fields |
+|-----------|---------------------|-----------------------------------|
+| `set_scene` | تغيير المشهد / Change scene | `scene` |
+| `start_recording` | بدء التسجيل / Start recording | - |
+| `stop_recording` | إيقاف التسجيل / Stop recording | - |
+| `toggle_recording` | تبديل التسجيل / Toggle recording | - |
+| `set_source_visibility` | إظهار/إخفاء مصدر / Show/hide source | `scene`, `source`, `visible` |
+
+> ملاحظة: الحقول `host` و `port` و `password` اختيارية، ويمكن أيضًا ضبطها عبر متغيرات البيئة `OBS_WS_HOST` و `OBS_WS_PORT` و `OBS_WS_PASSWORD`.
+>
+> Note: `host`, `port` and `password` are optional and can also be set via environment variables `OBS_WS_HOST`, `OBS_WS_PORT`, `OBS_WS_PASSWORD`.
+
+#### `POST /api/obs-status`
+فحص حالة اتصال OBS وحالة التسجيل / Check OBS connectivity and recording state
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 4455,
+  "password": ""
+}
+```
+
+**الاستجابة / Response:**
+```json
+{
+  "success": true,
+  "connected": true,
+  "obs_version": "30.0.0",
+  "recording": false
+}
+```
+
+---
+
+## 🎥 إعداد التحكم في OBS / OBS Control Setup
+
+لتفعيل أزرار OBS يجب تشغيل خادم WebSocket داخل OBS أولاً / To enable OBS buttons, first enable the WebSocket server inside OBS:
+
+1. **افتح OBS Studio** / Open OBS Studio
+2. **اذهب إلى**: `Tools → WebSocket Server Settings` / Go to: `Tools → WebSocket Server Settings`
+3. **فعّل**: ✅ `Enable WebSocket server`
+4. **تأكد من المنفذ**: `4455` (الافتراضي) / Confirm port: `4455` (default)
+5. **كلمة المرور**: إن وُجدت، أدخلها في إعدادات زر OBS داخل الاستوديو أو اضبط `OBS_WS_PASSWORD` / If set, enter it in the OBS button settings in Studio mode or set `OBS_WS_PASSWORD`
+6. **اختبر الاتصال**: في وضع الاستوديو (`Ctrl+E`)، اختر `OBS Control` ثم اضغط `🔌 Test OBS Connection` / Test: in Studio mode (`Ctrl+E`), pick `OBS Control` then click `🔌 Test OBS Connection`
+
+**إنشاء بروفايل OBS جاهز:** يوجد بروفايل مدمج باسم **OBS Studio** يحتوي على أزرار جاهزة (تغيير المشاهد، الكاميرا، بدء/إيقاف/تبديل التسجيل). عدّل أسماء المشاهد والمصادر لتطابق إعداداتك في OBS.
+
+**Ready OBS profile:** A built-in profile named **OBS Studio** ships with ready buttons (scene switching, camera, start/stop/toggle recording). Edit the scene/source names to match your OBS setup.
+
 ---
 
 ## 🎨 تخصيص البروفايلات / Profile Customization
@@ -257,7 +328,8 @@ The Companion Server provides API endpoints for advanced actions.
 ### البروفايلات الجاهزة / Pre-built Profiles:
 
 - **DevOps Dashboard**: أدوات المطورين / Developer tools
-- **Media Control**: التحكم بالوسائط / Media controls
+- **Media Control**: التحكم بالوسائط + تسجيل OBS / Media controls + OBS recording
+- **OBS Studio**: تحكم كامل في OBS (مشاهد، كاميرا، تسجيل) / Full OBS control (scenes, camera, recording)
 - **Productivity**: أدوات الإنتاجية / Productivity apps
 
 ---
@@ -298,6 +370,15 @@ netstat -ano | findstr :8765
 - إذا كان السيرفر مطفأ، بعض الويدجت ستعمل بوضع محاكاة / Some widgets work in demo mode without server
 - للحصول على بيانات حقيقية، شغّل السيرفر / For real data, start the companion server
 - تحقق من اتصال السيرفر في Console / Check server connection in console
+
+### المشكلة: أزرار OBS لا تعمل / OBS buttons not working
+
+**الحل / Solution:**
+- تأكد أن OBS **يعمل** وأن WebSocket مفعّل: `Tools → WebSocket Server Settings → Enable WebSocket server` / Ensure OBS is **running** with WebSocket enabled
+- تأكد أن إضافة `obsws-python` مثبتة: `pip install obsws-python` / Ensure `obsws-python` is installed
+- تأكد من صحة **المنفذ** (4455) و**كلمة المرور** / Verify the **port** (4455) and **password**
+- أسماء المشاهد/المصادر في الأزرار يجب أن تطابق أسماءها في OBS **حرفيًا** / Scene/source names must match OBS **exactly**
+- استخدم زر `🔌 Test OBS Connection` في وضع الاستوديو لتشخيص المشكلة / Use the `🔌 Test OBS Connection` button in Studio mode to diagnose
 
 ---
 
@@ -347,6 +428,7 @@ streamdeck-simulator/
 ├── presets/
 │   ├── devops_profile.json
 │   ├── media_profile.json
+│   ├── obs_profile.json
 │   └── productivity_profile.json
 ├── run_simulator.bat      # Windows launcher
 └── README.md              # This file

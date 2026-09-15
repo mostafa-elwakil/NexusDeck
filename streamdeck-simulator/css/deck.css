@@ -1,17 +1,57 @@
 /**
- * StreamDeck Interface Styling
- * Realistic 3D button effects, glassmorphism, and animations
+ * OpsDeck interface
  */
 
 :root {
-    --deck-bg: #0a0a0f;
+    --font: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --bg: #08090d;
+    --bg-elevated: #10131a;
+    --ink: #eef2f7;
+    --muted: #8d97ab;
+    --line: rgba(255, 255, 255, 0.08);
+    --accent: #4f8cff;
+    --accent-2: #7a5cff;
+    --success: #3ee0a0;
+    --danger: #ff5d6c;
+    --deck-bg: #08090d;
     --button-idle: #1a1a2e;
     --button-pressed: #0d0d16;
-    --button-glow: rgba(0, 150, 255, 0.5);
-    --button-success: rgba(0, 255, 136, 0.8);
-    --button-error: rgba(255, 68, 68, 0.8);
+    --button-glow: rgba(79, 140, 255, 0.45);
+    --button-success: rgba(62, 224, 160, 0.8);
+    --button-error: rgba(255, 93, 108, 0.8);
     --glass-bg: rgba(255, 255, 255, 0.05);
     --glass-border: rgba(255, 255, 255, 0.1);
+    --header-h: 72px;
+    --footer-h: 48px;
+}
+
+body.theme-light {
+    --bg: #eef3f8;
+    --bg-elevated: #ffffff;
+    --ink: #182d42;
+    --muted: #5b6d80;
+    --line: rgba(24, 45, 66, 0.12);
+    --deck-bg: #eef3f8;
+    --button-idle: #dce6f0;
+    --button-pressed: #c8d5e2;
+    --button-glow: rgba(0, 116, 217, 0.35);
+    --glass-bg: rgba(255, 255, 255, 0.72);
+    --glass-border: rgba(24, 45, 66, 0.16);
+    background: #e8eef5;
+    color: #182d42;
+}
+
+body.theme-light .deck-frame {
+    background: linear-gradient(180deg, #f7fafc 0%, #d5e0eb 100%);
+    box-shadow:
+        0 30px 80px rgba(44, 62, 80, 0.18),
+        0 0 0 1px rgba(24, 45, 66, 0.08);
+}
+
+body.theme-light .button-grid {
+    background: rgba(24, 45, 66, 0.08);
+    box-shadow: inset 0 2px 10px rgba(24, 45, 66, 0.12);
 }
 
 * {
@@ -21,63 +61,151 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%);
-    color: #ffffff;
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+.app-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background:
+        radial-gradient(900px 500px at 12% -10%, rgba(79, 140, 255, 0.18), transparent 55%),
+        radial-gradient(700px 420px at 100% 10%, rgba(122, 92, 255, 0.16), transparent 50%),
+        radial-gradient(800px 500px at 50% 120%, rgba(62, 224, 160, 0.08), transparent 55%),
+        var(--bg);
+}
+
+body.theme-light .app-bg {
+    background:
+        radial-gradient(900px 500px at 12% -10%, rgba(79, 140, 255, 0.16), transparent 55%),
+        radial-gradient(700px 420px at 100% 10%, rgba(122, 92, 255, 0.1), transparent 50%),
+        #eef3f8;
+}
+
+.app-stage {
+    position: relative;
+    z-index: 1;
     min-height: 100vh;
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 20px;
-    overflow: hidden;
+    padding: calc(var(--header-h) + 24px) 24px calc(var(--footer-h) + 24px);
 }
 
-/* Main Deck Container */
+body.studio-open .app-stage {
+    padding-left: 300px;
+    padding-right: 24px;
+}
+
+.loading-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: #08090d;
+    gap: 10px;
+}
+
+.loading-mark {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #fff;
+    background: linear-gradient(135deg, #4f8cff, #7a5cff);
+    box-shadow: 0 12px 40px rgba(79, 140, 255, 0.35);
+    animation: loading-float 1.8s ease-in-out infinite;
+}
+
+.loading-title {
+    margin-top: 8px;
+    font-size: 22px;
+    font-weight: 600;
+}
+
+.loading-copy {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+@keyframes loading-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+}
+
 .deck-container {
     position: relative;
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 40px;
 }
 
-/* Deck Frame (Hardware shell) */
 .deck-frame {
-    background: linear-gradient(135deg, #1a1a2e 0%, #0d0d16 100%);
-    border-radius: 24px;
-    padding: 40px;
-    box-shadow:
-        0 20px 60px rgba(0, 0, 0, 0.5),
-        0 0 0 2px rgba(255, 255, 255, 0.05),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+    background: linear-gradient(180deg, #1b2030 0%, #0d1018 100%);
+    border-radius: 32px;
+    padding: 28px 28px 18px;
     position: relative;
+    box-shadow:
+        0 40px 90px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
-.deck-frame::before {
+.deck-frame::before,
+.deck-frame::after {
     content: '';
     position: absolute;
-    top: -2px;
-    left: -2px;
-    right: -2px;
-    bottom: -2px;
-    background: linear-gradient(135deg, rgba(0, 150, 255, 0.2) 0%, rgba(255, 0, 150, 0.2) 100%);
-    border-radius: 26px;
-    z-index: -1;
-    opacity: 0.3;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #2a3144;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
-/* Button Grid */
+.deck-frame::before { top: 14px; left: 14px; }
+.deck-frame::after { top: 14px; right: 14px; }
+
 .button-grid {
     display: grid;
-    gap: 16px;
-    background: rgba(0, 0, 0, 0.3);
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+    gap: 14px;
+    background: rgba(0, 0, 0, 0.35);
+    padding: 18px;
+    border-radius: 18px;
+    box-shadow: inset 0 2px 14px rgba(0, 0, 0, 0.45);
 }
 
-/* Deck Size Variants */
+.deck-plate {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 14px;
+    padding: 0 8px 2px;
+    color: rgba(255, 255, 255, 0.38);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.deck-logo {
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.62);
+}
+
+body.theme-light .deck-plate,
+body.theme-light .deck-logo {
+    color: rgba(24, 45, 66, 0.45);
+}
+
 .deck-mini .button-grid {
     grid-template-columns: repeat(3, 1fr);
     grid-template-rows: repeat(2, 1fr);
@@ -98,10 +226,9 @@ body {
     grid-template-rows: repeat(4, 1fr);
 }
 
-/* Individual Button */
 .deck-button {
-    width: 80px;
-    height: 80px;
+    width: 88px;
+    height: 88px;
     position: relative;
     cursor: pointer;
     user-select: none;
@@ -112,7 +239,6 @@ body {
     transform: scale(0.98);
 }
 
-/* Button Inner Container (for 3D effect) */
 .button-inner {
     width: 100%;
     height: 100%;
@@ -121,12 +247,11 @@ body {
     transition: transform 0.15s ease;
 }
 
-/* Button Face (LCD screen surface) */
 .button-face {
     width: 100%;
     height: 100%;
     background: var(--button-idle);
-    border-radius: 12px;
+    border-radius: 16px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -135,34 +260,26 @@ body {
     position: relative;
     overflow: hidden;
     box-shadow:
-        0 4px 8px rgba(0, 0, 0, 0.4),
-        inset 0 1px 2px rgba(255, 255, 255, 0.1),
-        inset 0 -1px 2px rgba(0, 0, 0, 0.5);
+        0 8px 16px rgba(0, 0, 0, 0.35),
+        inset 0 1px 1px rgba(255, 255, 255, 0.14),
+        inset 0 -2px 6px rgba(0, 0, 0, 0.35);
     transition: all 0.2s ease;
 }
 
-/* Glassmorphism effect */
 .button-face::before {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 100%);
+    inset: 0;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 42%);
     pointer-events: none;
-    border-radius: 12px;
+    border-radius: 16px;
 }
 
-/* LCD Screen glow effect */
 .button-face::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0%, transparent 70%);
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.08) 0%, transparent 70%);
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -172,22 +289,20 @@ body {
     opacity: 1;
 }
 
-/* Button Icon */
 .button-icon {
-    font-size: 32px;
+    font-size: 30px;
     line-height: 1;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
     filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
     transition: transform 0.2s ease;
 }
 
-/* Button Label */
 .button-label {
     font-size: 10px;
     font-weight: 600;
     text-align: center;
     line-height: 1.2;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.92);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
     max-height: 100%;
     overflow: hidden;
@@ -197,14 +312,10 @@ body {
     white-space: pre-line;
 }
 
-/* Button States */
-
-/* Idle State */
 .deck-button.state-idle .button-inner {
     transform: translateZ(0);
 }
 
-/* Pressed State */
 .deck-button.state-pressed .button-inner {
     transform: translateZ(-4px);
 }
@@ -220,7 +331,6 @@ body {
     transform: scale(0.9);
 }
 
-/* Running State (Loading) */
 .deck-button.state-running .button-face {
     animation: pulse-glow 1.5s ease-in-out infinite;
 }
@@ -231,14 +341,10 @@ body {
 
 @keyframes pulse-glow {
     0%, 100% {
-        box-shadow:
-            0 4px 8px rgba(0, 0, 0, 0.4),
-            0 0 20px var(--button-glow);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4), 0 0 20px var(--button-glow);
     }
     50% {
-        box-shadow:
-            0 4px 8px rgba(0, 0, 0, 0.4),
-            0 0 40px var(--button-glow);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4), 0 0 40px var(--button-glow);
     }
 }
 
@@ -247,11 +353,8 @@ body {
     to { transform: rotate(360deg); }
 }
 
-/* Success State */
 .deck-button.state-success .button-face {
-    box-shadow:
-        0 4px 8px rgba(0, 0, 0, 0.4),
-        0 0 30px var(--button-success);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4), 0 0 30px var(--button-success);
     animation: success-flash 0.5s ease;
 }
 
@@ -260,11 +363,8 @@ body {
     50% { opacity: 0.7; }
 }
 
-/* Error State */
 .deck-button.state-error .button-face {
-    box-shadow:
-        0 4px 8px rgba(0, 0, 0, 0.4),
-        0 0 30px var(--button-error);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4), 0 0 30px var(--button-error);
     animation: error-shake 0.5s ease;
 }
 
@@ -274,24 +374,21 @@ body {
     75% { transform: translateX(4px); }
 }
 
-/* Selected State (Studio Mode) */
 .deck-button.selected .button-face {
     box-shadow:
         0 4px 8px rgba(0, 0, 0, 0.4),
-        0 0 0 3px rgba(0, 150, 255, 0.8),
-        0 0 20px rgba(0, 150, 255, 0.5);
+        0 0 0 3px rgba(79, 140, 255, 0.9),
+        0 0 20px rgba(79, 140, 255, 0.45);
 }
 
-/* Disabled State */
 .deck-button.state-disabled {
     opacity: 0.3;
     cursor: not-allowed;
 }
 
-/* Non-blocking notification stack */
 .notification-stack {
     position: fixed;
-    top: 20px;
+    top: calc(var(--header-h) + 12px);
     right: 20px;
     display: grid;
     gap: 10px;
@@ -305,14 +402,14 @@ body {
     align-items: flex-start;
     gap: 12px;
     position: relative;
-    background: rgba(0, 0, 0, 0.9);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-left: 3px solid #5da9ff;
-    border-radius: 12px;
-    padding: 16px 20px;
+    background: rgba(16, 19, 26, 0.92);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 14px;
+    padding: 14px 16px;
     width: 100%;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
     transform: translateX(400px);
     transition: transform 0.3s ease;
     pointer-events: auto;
@@ -326,12 +423,11 @@ body {
     font-weight: 600;
     font-size: 14px;
     margin-bottom: 4px;
-    color: #ffffff;
 }
 
 .notification-message {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--muted);
     white-space: pre-line;
     line-height: 1.4;
 }
@@ -345,42 +441,33 @@ body {
     border: 0;
     padding: 0;
     background: transparent;
-    color: rgba(255, 255, 255, 0.65);
+    color: var(--muted);
     cursor: pointer;
     font-size: 20px;
     line-height: 1;
 }
 
 .notification-close:hover {
-    color: #ffffff;
+    color: var(--ink);
 }
 
-.notification-success {
-    border-left-color: #00ff88;
-}
+.notification-success { border-left-color: var(--success); }
+.notification-warning { border-left-color: #ffc857; }
+.notification-error { border-left-color: var(--danger); }
 
-.notification-warning {
-    border-left-color: #ffc857;
-}
-
-.notification-error {
-    border-left-color: #ff4444;
-}
-
-/* Toast Notification */
 .toast-notification {
     position: fixed;
-    bottom: 20px;
+    bottom: calc(var(--footer-h) + 16px);
     left: 50%;
     transform: translateX(-50%) translateY(100px);
-    background: rgba(0, 0, 0, 0.9);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    padding: 12px 24px;
-    font-size: 14px;
-    color: #ffffff;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    background: rgba(16, 19, 26, 0.94);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 10px 20px;
+    font-size: 13px;
+    color: var(--ink);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     transition: transform 0.3s ease;
     z-index: 10000;
 }
@@ -389,82 +476,39 @@ body {
     transform: translateX(-50%) translateY(0);
 }
 
-/* Responsive Design */
 @media (max-width: 768px) {
     .notification-stack {
-        top: 12px;
+        top: calc(var(--header-h) + 8px);
         right: 12px;
         width: calc(100vw - 24px);
     }
 
     .deck-button {
-        width: 60px;
-        height: 60px;
+        width: 64px;
+        height: 64px;
     }
 
-    .button-icon {
-        font-size: 24px;
-    }
+    .button-icon { font-size: 22px; }
+    .button-label { font-size: 8px; }
+    .button-grid { gap: 10px; padding: 12px; }
+    .deck-frame { padding: 18px 18px 12px; border-radius: 24px; }
 
-    .button-label {
-        font-size: 8px;
-    }
-
-    .button-grid {
-        gap: 12px;
-        padding: 15px;
-    }
-
-    .deck-frame {
-        padding: 20px;
+    body.studio-open .app-stage {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-bottom: 42vh;
     }
 }
 
 @media (max-width: 480px) {
-    .deck-button {
-        width: 50px;
-        height: 50px;
-    }
-
-    .button-icon {
-        font-size: 20px;
-        margin-bottom: 2px;
-    }
-
-    .button-label {
-        font-size: 7px;
-    }
-
-    .button-grid {
-        gap: 8px;
-        padding: 10px;
-    }
-
-    .deck-frame {
-        padding: 15px;
-    }
+    .deck-button { width: 52px; height: 52px; }
+    .button-icon { font-size: 18px; margin-bottom: 2px; }
+    .button-label { font-size: 7px; }
 }
 
-/* Dark Theme Enhancements */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --deck-bg: #000000;
-        --button-idle: #0d0d16;
-    }
-}
-
-/* Print Styles */
 @media print {
-    body {
-        background: white;
-    }
-
-    .deck-frame {
-        box-shadow: none;
-        border: 2px solid #000;
-    }
-
-    .deck-button {
-        page-break-inside: avoid;
-    }
+    body { background: white; }
+    .deck-frame { box-shadow: none; border: 2px solid #000; }
+    .deck-button { page-break-inside: avoid; }
+    .app-header, .app-footer, #studio-container { display: none !important; }
 }

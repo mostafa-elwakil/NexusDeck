@@ -11,71 +11,83 @@ class StudioUI {
         this.liveKeys = liveKeysManager;
         this.selectedButton = null;
         this.editorMode = 'player'; // 'player' or 'studio'
+        this.theme = localStorage.getItem('streamdeck_theme') || 'dark';
 
         this.init();
     }
 
     init() {
         this.createStudioUI();
+        this.applyTheme(this.theme);
         this.attachEventListeners();
+        this.updateServerStatus(this.actions.serverAvailable);
     }
 
     createStudioUI() {
-        // Create main container
+        const header = this.createToolbar();
+        document.body.prepend(header);
+
+        const footer = document.createElement('footer');
+        footer.className = 'app-footer';
+        footer.innerHTML = `
+            <p class="footer-hint"><kbd>Ctrl</kbd>+<kbd>E</kbd> studio · <kbd>Ctrl</kbd>+<kbd>S</kbd> save · click a key to run</p>
+            <div id="server-status" class="status-pill is-offline" role="status">Companion offline</div>
+        `;
+        document.body.appendChild(footer);
+
         const studioContainer = document.createElement('div');
         studioContainer.id = 'studio-container';
         studioContainer.className = 'studio-hidden';
-
-        // Create toolbar
-        const toolbar = this.createToolbar();
-
-        // Create inspector panel
-        const inspector = this.createInspector();
-
-        // Create profiles panel
-        const profilesPanel = this.createProfilesPanel();
-
-        studioContainer.appendChild(toolbar);
-        studioContainer.appendChild(inspector);
-        studioContainer.appendChild(profilesPanel);
-
+        studioContainer.appendChild(this.createInspector());
+        studioContainer.appendChild(this.createProfilesPanel());
         document.body.appendChild(studioContainer);
     }
 
     createToolbar() {
-        const toolbar = document.createElement('div');
-        toolbar.className = 'studio-toolbar';
+        const toolbar = document.createElement('header');
+        toolbar.className = 'studio-toolbar app-header';
         toolbar.innerHTML = `
+            <div class="toolbar-section brand-section">
+                <div class="app-brand">
+                    <span class="brand-mark">OD</span>
+                    <div class="brand-copy">
+                        <strong>OpsDeck</strong>
+                        <span>Studio</span>
+                    </div>
+                </div>
+            </div>
             <div class="toolbar-section">
                 <button id="btn-toggle-mode" class="toolbar-btn" title="Toggle Studio Mode">
-                    <span class="icon">🎨</span>
+                    <span class="icon">✎</span>
                     <span class="label">Studio</span>
                 </button>
                 <button id="btn-save-profile" class="toolbar-btn" title="Save Current Profile">
-                    <span class="icon">💾</span>
+                    <span class="icon">▾</span>
                     <span class="label">Save</span>
                 </button>
                 <button id="btn-clear-deck" class="toolbar-btn" title="Clear All Buttons">
-                    <span class="icon">🗑️</span>
+                    <span class="icon">✕</span>
                     <span class="label">Clear</span>
+                </button>
+                <button id="btn-toggle-theme" class="toolbar-btn" title="Switch to light mode" aria-label="Switch to light mode">
+                    <span class="icon">☀</span>
+                    <span class="label">Day</span>
                 </button>
             </div>
             <div class="toolbar-section">
-                <label>Size:</label>
+                <label for="select-deck-size">Size</label>
                 <select id="select-deck-size" class="toolbar-select">
-                    <option value="mini">Mini (3×2)</option>
-                    <option value="cyd" selected>CYD (4×3)</option>
-                    <option value="classic">Classic (5×3)</option>
-                    <option value="xl">XL (8×4)</option>
+                    <option value="mini">Mini 3×2</option>
+                    <option value="cyd" selected>CYD 4×3</option>
+                    <option value="classic">Classic 5×3</option>
+                    <option value="xl">XL 8×4</option>
                 </select>
             </div>
             <div class="toolbar-section">
                 <button id="btn-export-profile" class="toolbar-btn" title="Export Profile">
-                    <span class="icon">📤</span>
                     <span class="label">Export</span>
                 </button>
                 <button id="btn-import-profile" class="toolbar-btn" title="Import Profile">
-                    <span class="icon">📥</span>
                     <span class="label">Import</span>
                 </button>
                 <input type="file" id="file-import-profile" accept=".json" style="display: none;">
@@ -90,12 +102,15 @@ class StudioUI {
         inspector.className = 'inspector-panel';
         inspector.innerHTML = `
             <div class="inspector-header">
-                <h3>Button Inspector</h3>
+                <div>
+                    <p class="panel-kicker">Key editor</p>
+                    <h3>Inspector</h3>
+                </div>
                 <button id="btn-close-inspector" class="close-btn">×</button>
             </div>
             <div class="inspector-content">
                 <div class="inspector-empty">
-                    <p>Click a button to edit</p>
+                    <p>Select a key on the deck to edit its label, color, and action.</p>
                 </div>
                 <div class="inspector-editor" style="display: none;">
                     <div class="form-group">
@@ -133,6 +148,7 @@ class StudioUI {
                             <option value="open_url">Open URL</option>
                             <option value="open_app">Open Application</option>
                             <option value="run_command">Run Command</option>
+                            <option value="obs_control">OBS Control</option>
                             <option value="copy_text">Copy Text</option>
                             <option value="http_check">HTTP Health Check</option>
                             <option value="ping">Ping Host</option>
@@ -161,6 +177,7 @@ class StudioUI {
         panel.className = 'profiles-panel';
         panel.innerHTML = `
             <div class="panel-header">
+                <p class="panel-kicker">Layouts</p>
                 <h3>Profiles</h3>
             </div>
             <div class="panel-content">
@@ -179,6 +196,10 @@ class StudioUI {
         // Toggle mode
         document.getElementById('btn-toggle-mode')?.addEventListener('click', () => {
             this.toggleMode();
+        });
+
+        document.getElementById('btn-toggle-theme')?.addEventListener('click', () => {
+            this.applyTheme(this.theme === 'dark' ? 'light' : 'dark');
         });
 
         // Deck size change
@@ -281,8 +302,34 @@ class StudioUI {
             }
         });
 
-        // Initial profiles list
+        this.deck.container.addEventListener('action:serverStatus', (e) => {
+            this.updateServerStatus(e.detail.available);
+        });
+
         this.refreshProfilesList();
+    }
+
+    updateServerStatus(available) {
+        const pill = document.getElementById('server-status');
+        if (!pill) return;
+        pill.classList.toggle('is-online', !!available);
+        pill.classList.toggle('is-offline', !available);
+        pill.textContent = available ? 'Companion online' : 'Companion offline';
+    }
+
+    applyTheme(theme) {
+        this.theme = theme === 'light' ? 'light' : 'dark';
+        document.body.classList.toggle('theme-light', this.theme === 'light');
+        localStorage.setItem('streamdeck_theme', this.theme);
+
+        const button = document.getElementById('btn-toggle-theme');
+        if (button) {
+            const lightMode = this.theme === 'light';
+            button.title = lightMode ? 'Switch to dark mode' : 'Switch to light mode';
+            button.setAttribute('aria-label', button.title);
+            button.querySelector('.icon').textContent = lightMode ? '☾' : '☀';
+            button.querySelector('.label').textContent = lightMode ? 'Night' : 'Day';
+        }
     }
 
     toggleMode() {
@@ -290,14 +337,18 @@ class StudioUI {
         const studioContainer = document.getElementById('studio-container');
         const toggleBtn = document.getElementById('btn-toggle-mode');
 
-        if (this.editorMode === 'studio') {
-            studioContainer.classList.remove('studio-hidden');
-            toggleBtn.classList.add('active');
-            toggleBtn.querySelector('.label').textContent = 'Player';
-        } else {
-            studioContainer.classList.add('studio-hidden');
-            toggleBtn.classList.remove('active');
-            toggleBtn.querySelector('.label').textContent = 'Studio';
+        const isStudio = this.editorMode === 'studio';
+        studioContainer.classList.toggle('studio-hidden', !isStudio);
+        document.body.classList.toggle('studio-open', isStudio);
+        toggleBtn.classList.toggle('active', isStudio);
+        toggleBtn.querySelector('.label').textContent = isStudio ? 'Player' : 'Studio';
+        const hint = document.querySelector('.footer-hint');
+        if (hint) {
+            hint.innerHTML = isStudio
+                ? '<kbd>Esc</kbd> close inspector · click a key to edit'
+                : '<kbd>Ctrl</kbd>+<kbd>E</kbd> studio · <kbd>Ctrl</kbd>+<kbd>S</kbd> save · click a key to run';
+        }
+        if (!isStudio) {
             this.closeInspector();
         }
     }
@@ -369,6 +420,44 @@ class StudioUI {
                     </select>
                 </div>
             `,
+            'obs_control': `
+                <div class="form-group">
+                    <label>OBS Operation</label>
+                    <select id="action-obs-operation" class="form-control">
+                        <option value="set_scene">Change Scene</option>
+                        <option value="start_recording">Start Recording</option>
+                        <option value="stop_recording">Stop Recording</option>
+                        <option value="toggle_recording">Start/Stop Recording (Toggle)</option>
+                        <option value="set_source_visibility">Show/Hide Source</option>
+                    </select>
+                </div>
+                <div class="form-group" id="obs-scene-group">
+                    <label>Scene Name</label>
+                    <input type="text" id="action-obs-scene" class="form-control" placeholder="e.g. Gaming Scene" value="${existingAction?.scene || ''}">
+                </div>
+                <div class="form-group" id="obs-source-group">
+                    <label>Source Name</label>
+                    <input type="text" id="action-obs-source" class="form-control" placeholder="e.g. Camera" value="${existingAction?.source || ''}">
+                </div>
+                <div class="form-group" id="obs-visible-group">
+                    <label>Visibility</label>
+                    <select id="action-obs-visible" class="form-control">
+                        <option value="true" ${existingAction?.visible !== false ? 'selected' : ''}>Show</option>
+                        <option value="false" ${existingAction?.visible === false ? 'selected' : ''}>Hide</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>OBS WebSocket Connection (optional)</label>
+                    <input type="text" id="action-obs-host" class="form-control" placeholder="Host (default: 127.0.0.1)" value="${existingAction?.host || ''}" style="margin-bottom: 6px;">
+                    <input type="text" id="action-obs-port" class="form-control" placeholder="Port (default: 4455)" value="${existingAction?.port || ''}" style="margin-bottom: 6px;">
+                    <input type="password" id="action-obs-password" class="form-control" placeholder="Password (if set in OBS)" value="${existingAction?.password || ''}">
+                </div>
+                <div class="form-group">
+                    <button id="btn-obs-test" class="btn btn-secondary" type="button" style="width: 100%;">🔌 Test OBS Connection</button>
+                    <div id="obs-test-result" style="margin-top: 6px; font-size: 12px; line-height: 1.4;"></div>
+                    <small style="display: block; margin-top: 6px; opacity: 0.7;">Enable in OBS: Tools → WebSocket Server Settings (port 4455)</small>
+                </div>
+            `,
             'copy_text': `
                 <div class="form-group">
                     <label>Text to Copy</label>
@@ -421,6 +510,79 @@ class StudioUI {
         if (configs[actionType]) {
             configContainer.innerHTML = configs[actionType];
         }
+
+        if (actionType === 'obs_control') {
+            this.setupObsConfig(existingAction);
+        }
+    }
+
+    setupObsConfig(existingAction = null) {
+        const operationSelect = document.getElementById('action-obs-operation');
+        if (!operationSelect) return;
+
+        // Restore previously saved operation when editing an existing button
+        if (existingAction?.operation) {
+            operationSelect.value = existingAction.operation;
+        }
+
+        operationSelect.addEventListener('change', () => this.updateObsFieldVisibility());
+        this.updateObsFieldVisibility();
+
+        document.getElementById('btn-obs-test')?.addEventListener('click', () => {
+            this.testObsConnection();
+        });
+    }
+
+    updateObsFieldVisibility() {
+        const operation = document.getElementById('action-obs-operation')?.value;
+        if (!operation) return;
+
+        const sceneGroup = document.getElementById('obs-scene-group');
+        const sourceGroup = document.getElementById('obs-source-group');
+        const visibleGroup = document.getElementById('obs-visible-group');
+
+        const needsScene = operation === 'set_scene' || operation === 'set_source_visibility';
+        const needsSource = operation === 'set_source_visibility';
+
+        if (sceneGroup) sceneGroup.style.display = needsScene ? 'block' : 'none';
+        if (sourceGroup) sourceGroup.style.display = needsSource ? 'block' : 'none';
+        if (visibleGroup) visibleGroup.style.display = needsSource ? 'block' : 'none';
+    }
+
+    async testObsConnection() {
+        const resultBox = document.getElementById('obs-test-result');
+        if (!resultBox) return;
+
+        const payload = {
+            host: document.getElementById('action-obs-host')?.value.trim() || '',
+            port: document.getElementById('action-obs-port')?.value.trim() || '',
+            password: document.getElementById('action-obs-password')?.value || ''
+        };
+
+        resultBox.style.color = '#999';
+        resultBox.textContent = '⏳ Connecting to OBS...';
+
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/obs-status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            if (result.success && result.connected) {
+                const version = result.obs_version ? ` - OBS ${result.obs_version}` : '';
+                const recording = result.recording ? ' (Recording)' : '';
+                resultBox.style.color = '#28a745';
+                resultBox.textContent = `✅ Connected${version}${recording}`;
+            } else {
+                resultBox.style.color = '#dc3545';
+                resultBox.textContent = `❌ ${result.error || 'OBS not reachable'}`;
+            }
+        } catch (error) {
+            resultBox.style.color = '#dc3545';
+            resultBox.textContent = `❌ ${error.message}`;
+        }
     }
 
     applyButtonChanges() {
@@ -463,6 +625,24 @@ class StudioUI {
                 command: document.getElementById('action-command').value,
                 shell: document.getElementById('action-shell').value
             }),
+            'obs_control': () => {
+                const operation = document.getElementById('action-obs-operation').value;
+                const action = {
+                    type: 'obs_control',
+                    operation,
+                    host: document.getElementById('action-obs-host')?.value.trim() || '',
+                    port: document.getElementById('action-obs-port')?.value.trim() || '',
+                    password: document.getElementById('action-obs-password')?.value || ''
+                };
+                if (operation === 'set_scene' || operation === 'set_source_visibility') {
+                    action.scene = document.getElementById('action-obs-scene')?.value.trim() || '';
+                }
+                if (operation === 'set_source_visibility') {
+                    action.source = document.getElementById('action-obs-source')?.value.trim() || '';
+                    action.visible = document.getElementById('action-obs-visible')?.value !== 'false';
+                }
+                return action;
+            },
             'copy_text': () => ({ type: 'copy_text', text: document.getElementById('action-text').value }),
             'http_check': () => ({ type: 'http_check', url: document.getElementById('action-url').value }),
             'ping': () => ({ type: 'ping', host: document.getElementById('action-host').value }),

@@ -361,14 +361,20 @@ void executeButtonAction(uint8_t index) {
         return;
     }
 
+    if (btn.actionType == "custom" || btn.actionType == "widget" ||
+        btn.actionType == "navigate" || btn.actionType == "macro") {
+        Serial.println("This action runs only in the browser simulator");
+        return;
+    }
+
     // Send action to server
     setButtonState(index, 2); // Running state
     drawButton(index);
 
-    // Build request
+    // Build request. actionData is the full action JSON (including every field).
     String url = String(SERVER_URL) + "/api/execute-action";
 
-    StaticJsonDocument<512> doc;
+    DynamicJsonDocument doc(1536);
     doc["actionType"] = btn.actionType;
     doc["actionData"] = btn.actionData;
 
@@ -377,19 +383,29 @@ void executeButtonAction(uint8_t index) {
     Serial.print("Action payload: ");
     Serial.println(jsonPayload);
 
+    http.setTimeout(20000);
     http.begin(url);
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.POST(jsonPayload);
+    String responseBody = http.getString();
+    bool succeeded = (httpCode == 200);
 
-    if (httpCode == 200) {
+    if (succeeded && responseBody.length() > 0) {
+        DynamicJsonDocument resultDoc(512);
+        if (!deserializeJson(resultDoc, responseBody) && resultDoc.containsKey("success")) {
+            succeeded = resultDoc["success"] | false;
+        }
+    }
+
+    if (succeeded) {
         Serial.println("Action executed successfully");
         setButtonState(index, 3); // Success state
     } else {
         Serial.print("Action failed with code: ");
         Serial.println(httpCode);
         Serial.print("Action response: ");
-        Serial.println(http.getString());
+        Serial.println(responseBody);
         setButtonState(index, 4); // Error state
     }
 
@@ -407,6 +423,7 @@ void syncProfile() {
 
     String url = String(SERVER_URL) + "/api/health";
 
+    http.setTimeout(8000);
     http.begin(url);
     int httpCode = http.GET();
 
@@ -421,54 +438,62 @@ void syncProfile() {
         if (httpCode == 200) {
             String payload = http.getString();
 
-            StaticJsonDocument<4096> doc;
+            DynamicJsonDocument doc(12288);
             DeserializationError error = deserializeJson(doc, payload);
 
-            if (!error && doc.containsKey("buttons")) {
+            if (error) {
+                Serial.print("Profile JSON parse failed: ");
+                Serial.println(error.c_str());
+            } else if (doc.containsKey("buttons")) {
                 JsonArray buttonsArray = doc["buttons"];
+                String profileSignature;
 
-                for (uint8_t i = 0; i < BUTTON_COUNT && i < buttonsArray.size(); i++) {
+                for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+                    if (i >= buttonsArray.size()) {
+                        buttons[i].label = String(i + 1);
+                        buttons[i].icon = "";
+                        buttons[i].color = TFT_DARKGREY;
+                        buttons[i].actionType = "";
+                        buttons[i].actionData = "{}";
+                        buttons[i].hasWidget = false;
+                        buttons[i].widgetType = "";
+                        continue;
+                    }
+
                     JsonObject btnObj = buttonsArray[i];
 
                     buttons[i].label = btnObj["label"] | "";
                     buttons[i].icon = btnObj["icon"] | "";
                     buttons[i].color = parseColor(btnObj["color"] | "#1a1a2e");
+                    buttons[i].hasWidget = false;
+                    buttons[i].widgetType = "";
 
-                    if (btnObj.containsKey("action") && !btnObj["action"].isNull()) {
+                    if (btnObj.containsKey("action") && btnObj["action"].is<JsonObject>()) {
                         JsonObject actionObj = btnObj["action"].as<JsonObject>();
                         buttons[i].actionType = actionObj["type"] | "";
-
-                        if (actionObj.containsKey("data")) {
-                            buttons[i].actionData = actionObj["data"] | "{}";
-                        } else {
-                            StaticJsonDocument<512> actionDataDoc;
-                            const char* actionFields[] = {
-                                "app", "url", "command", "shell", "host",
-                                "container", "dockerAction"
-                            };
-
-                            for (const char* field : actionFields) {
-                                if (actionObj.containsKey(field)) {
-                                    actionDataDoc[field] = actionObj[field];
-                                }
-                            }
-
-                            buttons[i].actionData = "";
-                            serializeJson(actionDataDoc, buttons[i].actionData);
-                        }
+                        buttons[i].actionData = "";
+                        serializeJson(actionObj, buttons[i].actionData);
                     } else {
                         buttons[i].actionType = "";
                         buttons[i].actionData = "{}";
                     }
 
-                    if (btnObj.containsKey("widget") && !btnObj["widget"].isNull()) {
+                    if (btnObj.containsKey("widget") && btnObj["widget"].is<JsonObject>()) {
                         buttons[i].hasWidget = true;
                         buttons[i].widgetType = btnObj["widget"]["type"] | "";
                     }
+
+                    profileSignature += buttons[i].label + "|" + buttons[i].icon + "|" +
+                        buttons[i].actionType + "|" + buttons[i].actionData + "|" +
+                        String(buttons[i].color) + "|" + buttons[i].widgetType + ";";
                 }
 
-                drawAllButtons();
-                Serial.println("Profile synced successfully");
+                static String lastProfileSignature;
+                if (profileSignature != lastProfileSignature) {
+                    lastProfileSignature = profileSignature;
+                    drawAllButtons();
+                    Serial.println("Profile synced successfully");
+                }
             }
         }
     } else {
@@ -547,6 +572,17 @@ String displayIcon(const String& icon) {
     if (icon == "⏱️") return "UP";
     if (icon == "🔥") return "CPU";
     if (icon == "💾") return "RAM";
+    if (icon == "🎥") return "OBS";
+    if (icon == "🎮") return "GAME";
+    if (icon == "💬") return "CHAT";
+    if (icon == "🖥️") return "DESK";
+    if (icon == "📷") return "CAM";
+    if (icon == "🚫") return "OFF";
+    if (icon == "⏺️") return "REC";
+    if (icon == "⏹️") return "STOP";
+    if (icon == "⏯️") return "TOG";
+    if (icon == "⏲️") return "TMR";
+    if (icon == "▶️") return "PLAY";
     return icon;
 }
 

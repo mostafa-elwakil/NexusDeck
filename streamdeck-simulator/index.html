@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="StreamDeck Studio & Simulator - Virtual Elgato Stream Deck with live widgets and customization">
-    <title>StreamDeck Simulator - Virtual Control Deck</title>
-
-    <!-- Stylesheets -->
+    <title>OpsDeck Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/deck.css">
     <link rel="stylesheet" href="css/studio.css">
 
@@ -14,20 +15,15 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
 </head>
 <body>
-    <!-- Main Deck Container -->
-    <div id="deck-container"></div>
+    <div class="app-bg" aria-hidden="true"></div>
+    <main class="app-stage">
+        <div id="deck-container"></div>
+    </main>
 
-    <!-- Loading Screen -->
-    <div id="loading-screen" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999;">
-        <div style="font-size: 64px; margin-bottom: 20px; animation: pulse 2s ease-in-out infinite;">🎮</div>
-        <div style="font-size: 24px; font-weight: 600; color: #ffffff; margin-bottom: 10px;">StreamDeck Simulator</div>
-        <div style="font-size: 14px; color: rgba(255, 255, 255, 0.5);">Loading virtual deck...</div>
-        <style>
-            @keyframes pulse {
-                0%, 100% { transform: scale(1); opacity: 1; }
-                50% { transform: scale(1.1); opacity: 0.8; }
-            }
-        </style>
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-mark">OD</div>
+        <div class="loading-title">OpsDeck Studio</div>
+        <div class="loading-copy">Preparing your control surface</div>
     </div>
 
     <!-- Utility Scripts -->
@@ -93,10 +89,10 @@
                         const loadingScreen = document.getElementById('loading-screen');
                         if (loadingScreen) {
                             loadingScreen.style.opacity = '0';
-                            loadingScreen.style.transition = 'opacity 0.5s ease';
-                            setTimeout(() => loadingScreen.remove(), 500);
+                            loadingScreen.style.transition = 'opacity 0.35s ease';
+                            setTimeout(() => loadingScreen.remove(), 350);
                         }
-                    }, 1000);
+                    }, 350);
 
                     console.log('StreamDeck Simulator initialized successfully');
 
@@ -183,6 +179,7 @@
                     } else {
                         console.log('Companion server not available - running in standalone mode');
                     }
+                    this.studio?.updateServerStatus(this.actions.serverAvailable);
                 } catch (error) {
                     appLogger.warn('Server check failed', { error: error.message });
                 }

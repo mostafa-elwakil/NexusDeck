@@ -22,6 +22,7 @@ class ActionsEngine {
             'macro': this.executeMacro.bind(this),
             'navigate': this.navigate.bind(this),
             'docker_command': this.dockerCommand.bind(this),
+            'obs_control': this.obsControl.bind(this),
             'custom_script': this.customScript.bind(this)
         };
 
@@ -137,6 +138,22 @@ class ActionsEngine {
         // Optionally show output
         if (action.showOutput && result.output) {
             this.showNotification('Command Output', result.output);
+        }
+    }
+
+    async obsControl(action, button) {
+        if (!this.serverAvailable) {
+            throw new Error('Companion server required for OBS control');
+        }
+
+        const response = await fetch(`${this.serverUrl}/api/obs-control`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(action)
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'OBS action failed');
         }
     }
 

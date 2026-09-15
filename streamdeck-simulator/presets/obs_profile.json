@@ -1,0 +1,128 @@
+{
+  "name": "OBS Studio",
+  "size": "cyd",
+  "rows": 3,
+  "cols": 4,
+  "buttons": [
+    {
+      "label": "OBS",
+      "icon": "🎥",
+      "color": "#302e31",
+      "action": {
+        "type": "open_app",
+        "app": "obs64.exe"
+      }
+    },
+    {
+      "label": "Scene: Game",
+      "icon": "🎮",
+      "color": "#2496ed",
+      "action": {
+        "type": "obs_control",
+        "operation": "set_scene",
+        "scene": "Game"
+      }
+    },
+    {
+      "label": "Scene: Chat",
+      "icon": "💬",
+      "color": "#6264a7",
+      "action": {
+        "type": "obs_control",
+        "operation": "set_scene",
+        "scene": "Chatting"
+      }
+    },
+    {
+      "label": "Scene: Desktop",
+      "icon": "🖥️",
+      "color": "#007acc",
+      "action": {
+        "type": "obs_control",
+        "operation": "set_scene",
+        "scene": "Desktop"
+      }
+    },
+    {
+      "label": "Camera On",
+      "icon": "📷",
+      "color": "#1db954",
+      "action": {
+        "type": "obs_control",
+        "operation": "set_source_visibility",
+        "scene": "Game",
+        "source": "Camera",
+        "visible": true
+      }
+    },
+    {
+      "label": "Camera Off",
+      "icon": "🚫",
+      "color": "#3e1a1a",
+      "action": {
+        "type": "obs_control",
+        "operation": "set_source_visibility",
+        "scene": "Game",
+        "source": "Camera",
+        "visible": false
+      }
+    },
+    {
+      "label": "Start Rec",
+      "icon": "⏺️",
+      "color": "#ff0000",
+      "action": {
+        "type": "obs_control",
+        "operation": "start_recording"
+      }
+    },
+    {
+      "label": "Stop Rec",
+      "icon": "⏹️",
+      "color": "#8a1a1a",
+      "action": {
+        "type": "obs_control",
+        "operation": "stop_recording"
+      }
+    },
+    {
+      "label": "Rec Toggle",
+      "icon": "⏯️",
+      "color": "#ea4335",
+      "action": {
+        "type": "obs_control",
+        "operation": "toggle_recording"
+      }
+    },
+    {
+      "label": "",
+      "icon": "🕐",
+      "color": "#1a1a3e",
+      "action": null,
+      "widget": {
+        "type": "clock"
+      }
+    },
+    {
+      "label": "",
+      "icon": "⏱️",
+      "color": "#1a2e3e",
+      "action": null,
+      "widget": {
+        "type": "stopwatch"
+      }
+    },
+    {
+      "label": "",
+      "icon": "⏲️",
+      "color": "#2d2d6f",
+      "action": null,
+      "widget": {
+        "type": "timer",
+        "config": {
+          "duration": 300
+        }
+      }
+    }
+  ]
+}

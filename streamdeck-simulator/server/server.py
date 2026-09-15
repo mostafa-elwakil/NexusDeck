@@ -10,11 +10,13 @@ from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
 import subprocess
+import shutil
 import psutil
 import platform
 import os
 import json
 import re
+import sys
 import time
 import threading
 
@@ -26,6 +28,135 @@ CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', 'http://*.local:*
 PORT = 8765
 HOST = '0.0.0.0'
 SIMULATOR_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+def _obs_get_field(obj, *names):
+    """Read a field from an obsws-python response regardless of key naming style.
+
+    obsws-python returns AttrDict objects with snake_case keys, but some
+    versions/fields may still expose camelCase - try both.
+    """
+    for name in names:
+        if isinstance(obj, dict):
+            if name in obj:
+                return obj[name]
+        else:
+            value = getattr(obj, name, None)
+            if value is not None:
+                return value
+    return None
+
+
+def _obs_disconnect(client):
+    """Best-effort disconnect to avoid leaking websocket threads per request."""
+    try:
+        if client is not None and hasattr(client, 'disconnect'):
+            client.disconnect()
+    except Exception:
+        pass
+
+
+def _obs_connect(data):
+    """Create an obsws-python request client from request data or environment."""
+    import obsws_python
+
+    host = data.get('host') or os.getenv('OBS_WS_HOST', '127.0.0.1')
+    raw_port = data.get('port') or os.getenv('OBS_WS_PORT', '4455')
+    password = data.get('password') or os.getenv('OBS_WS_PASSWORD', '')
+
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        raise ValueError('OBS port must be a number')
+
+    return obsws_python.ReqClient(host=host, port=port, password=password, timeout=5)
+
+
+def execute_obs_action(data):
+    """Execute an OBS WebSocket 5 action using obsws-python."""
+    try:
+        import obsws_python  # noqa: F401 - availability check
+    except ImportError:
+        return False, 'Install obsws-python (pip install obsws-python) and enable OBS WebSocket 5'
+
+    operation = (data.get('operation') or '').strip()
+    if not operation:
+        return False, 'OBS operation is required'
+
+    # Validate the operation BEFORE connecting so users get precise errors
+    # even when OBS is not reachable.
+    supported = {
+        'set_scene', 'start_recording', 'stop_recording',
+        'toggle_recording', 'set_source_visibility'
+    }
+    if operation not in supported:
+        return False, f'Unsupported OBS operation: {operation}'
+
+    # Validate required fields BEFORE connecting for precise error messages
+    if operation == 'set_scene' and not (data.get('scene') or '').strip():
+        return False, 'OBS scene name is required'
+    if operation == 'set_source_visibility':
+        if not (data.get('scene') or '').strip() or not (data.get('source') or '').strip():
+            return False, 'OBS scene and source are required'
+
+    client = None
+    try:
+        client = _obs_connect(data)
+
+        if operation == 'set_scene':
+            scene = (data.get('scene') or '').strip()
+            if not scene:
+                return False, 'OBS scene name is required'
+            client.set_current_program_scene(scene)
+
+        elif operation == 'start_recording':
+            client.start_record()
+
+        elif operation == 'stop_recording':
+            response = client.stop_record()
+            output_path = _obs_get_field(response, 'output_path', 'outputPath')
+            if output_path:
+                return True, f'Recording saved: {output_path}'
+
+        elif operation == 'toggle_recording':
+            client.toggle_record()
+
+        elif operation == 'set_source_visibility':
+            scene = (data.get('scene') or '').strip()
+            source = (data.get('source') or '').strip()
+            if not scene or not source:
+                return False, 'OBS scene and source are required'
+            items = client.get_scene_item_list(scene).scene_items
+            item = next(
+                (entry for entry in items
+                 if _obs_get_field(entry, 'source_name', 'sourceName') == source),
+                None
+            )
+            if item is None:
+                return False, f'OBS source not found in scene "{scene}": {source}'
+            client.set_scene_item_enabled(
+                scene,
+                _obs_get_field(item, 'scene_item_id', 'sceneItemId'),
+                bool(data.get('visible', True))
+            )
+
+        return True, f'OBS {operation} completed'
+    except ValueError as error:
+        return False, str(error)
+    except Exception as error:
+        log_request('ERROR', f'OBS: {str(error)}')
+        message = str(error)
+        lowered = message.lower()
+        if any(token in lowered for token in ('timed out', 'timeout', 'connection', 'refused', 'handshake', 'unreachable')):
+            return False, ('Cannot reach OBS. Make sure OBS is running and WebSocket is '
+                           'enabled (Tools > WebSocket Server Settings, default port 4455).')
+        if any(token in lowered for token in ('auth', 'password', '401', '403')):
+            return False, 'OBS authentication failed - check the WebSocket password.'
+        if 'no source was found' in lowered:
+            return False, ('OBS scene/source not found - the name must match exactly. '
+                           'Check the OBS Scenes/Sources list for the correct name.')
+        return False, f'OBS action failed: {message}'
+    finally:
+        _obs_disconnect(client)
 
 @app.route('/', methods=['GET'])
 def simulator_index():
@@ -167,6 +298,285 @@ def validate_host(host):
     
     return True, None
 
+
+def validate_docker_container(container):
+    """Validate Docker container name used by ESP32 docker_command actions."""
+    if not isinstance(container, str) or not container.strip() or len(container) > 128:
+        return False, 'Invalid container name'
+    if not re.match(r'^[\w.\-*]+$', container.strip()):
+        return False, 'Container name contains invalid characters'
+    return True, None
+
+
+APP_ALIASES = {
+    'code': ['code', 'Code.exe', 'code.cmd'],
+    'vscode': ['code', 'Code.exe', 'code.cmd'],
+    'chrome': ['chrome.exe', 'google-chrome', 'chrome'],
+    'firefox': ['firefox.exe', 'firefox'],
+    'terminal': ['wt.exe', 'wt', 'gnome-terminal'],
+    'notepad': ['notepad.exe', 'gedit'],
+    'calc': ['calc.exe', 'gnome-calculator'],
+    'explorer': ['explorer.exe', 'nautilus'],
+    'obs': ['obs64.exe', 'obs'],
+}
+
+
+def _common_app_paths(app_name):
+    """Known install locations so Windows apps launch even when PATH is incomplete."""
+    if platform.system() != 'Windows':
+        return []
+
+    local = os.environ.get('LOCALAPPDATA', '')
+    pf = os.environ.get('ProgramFiles', r'C:\Program Files')
+    pf86 = os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')
+    system32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    key = app_name.lower()
+
+    locations = {
+        'code': [
+            os.path.join(local, r'Programs\Microsoft VS Code\Code.exe'),
+            os.path.join(pf, r'Microsoft VS Code\Code.exe'),
+        ],
+        'vscode': [
+            os.path.join(local, r'Programs\Microsoft VS Code\Code.exe'),
+            os.path.join(pf, r'Microsoft VS Code\Code.exe'),
+        ],
+        'chrome': [
+            os.path.join(pf, r'Google\Chrome\Application\chrome.exe'),
+            os.path.join(local, r'Google\Chrome\Application\chrome.exe'),
+            os.path.join(pf86, r'Google\Chrome\Application\chrome.exe'),
+        ],
+        'chrome.exe': [
+            os.path.join(pf, r'Google\Chrome\Application\chrome.exe'),
+            os.path.join(local, r'Google\Chrome\Application\chrome.exe'),
+        ],
+        'firefox': [os.path.join(pf, r'Mozilla Firefox\firefox.exe')],
+        'firefox.exe': [os.path.join(pf, r'Mozilla Firefox\firefox.exe')],
+        'obs': [os.path.join(pf, r'obs-studio\bin\64bit\obs64.exe')],
+        'obs64.exe': [os.path.join(pf, r'obs-studio\bin\64bit\obs64.exe')],
+        'vlc.exe': [
+            os.path.join(pf, r'VideoLAN\VLC\vlc.exe'),
+            os.path.join(pf86, r'VideoLAN\VLC\vlc.exe'),
+        ],
+        'wt.exe': [os.path.join(local, r'Microsoft\WindowsApps\wt.exe')],
+        'terminal': [os.path.join(local, r'Microsoft\WindowsApps\wt.exe')],
+        'notepad.exe': [os.path.join(system32, 'notepad.exe')],
+        'calc.exe': [os.path.join(system32, 'calc.exe')],
+        'taskmgr.exe': [os.path.join(system32, 'taskmgr.exe')],
+        'explorer.exe': [os.path.join(system32, 'explorer.exe')],
+        'excel.exe': [
+            os.path.join(pf, r'Microsoft Office\root\Office16\EXCEL.EXE'),
+            os.path.join(pf, r'Microsoft Office\Office16\EXCEL.EXE'),
+        ],
+        'winword.exe': [
+            os.path.join(pf, r'Microsoft Office\root\Office16\WINWORD.EXE'),
+            os.path.join(pf, r'Microsoft Office\Office16\WINWORD.EXE'),
+        ],
+        'teams.exe': [
+            os.path.join(local, r'Microsoft\WindowsApps\ms-teams.exe'),
+            os.path.join(local, r'Microsoft\Teams\current\Teams.exe'),
+        ],
+    }
+    return [path for path in locations.get(key, []) if path and os.path.isfile(path)]
+
+
+def resolve_app_executable(app_name):
+    """Resolve a button app name to an executable Windows/Linux can actually launch."""
+    names = APP_ALIASES.get(app_name.lower(), [app_name])
+    search_names = []
+    for name in names + [app_name]:
+        if name and name not in search_names:
+            search_names.append(name)
+
+    for path in _common_app_paths(app_name):
+        return path
+
+    extra_path = os.environ.get('PATH', '')
+    if platform.system() == 'Windows':
+        local = os.environ.get('LOCALAPPDATA', '')
+        extras = [
+            os.path.join(local, r'Programs\Microsoft VS Code\bin'),
+            os.path.join(local, r'Microsoft\WindowsApps'),
+            os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), r'Microsoft VS Code\bin'),
+        ]
+        extra_path = os.pathsep.join([extra_path] + [item for item in extras if os.path.isdir(item)])
+
+    for name in search_names:
+        found = shutil.which(name, path=extra_path)
+        if found:
+            return found
+        if platform.system() == 'Windows' and not os.path.splitext(name)[1]:
+            for ext in ('.exe', '.cmd', '.bat', '.com'):
+                found = shutil.which(name + ext, path=extra_path)
+                if found:
+                    return found
+    return None
+
+
+def execute_open_app(app_name, args=None):
+    app_name = (app_name or '').strip()
+    args = args or []
+
+    if not app_name:
+        return False, 'Application name not provided'
+    valid, error = validate_app_name(app_name)
+    if not valid:
+        return False, error
+    valid, error = validate_arguments(args)
+    if not valid:
+        return False, error
+
+    resolved_app = resolve_app_executable(app_name)
+    if not resolved_app:
+        return False, f'Application "{app_name}" not found'
+
+    try:
+        if platform.system() == 'Windows' and not args:
+            os.startfile(resolved_app)
+            return True, f'Successfully opened {app_name}'
+
+        if platform.system() == 'Windows' and resolved_app.lower().endswith(('.cmd', '.bat')):
+            subprocess.Popen(
+                ['cmd', '/c', resolved_app] + args,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        elif platform.system() == 'Windows':
+            subprocess.Popen(
+                [resolved_app] + args,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            subprocess.Popen([resolved_app] + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True, f'Successfully opened {app_name}'
+    except FileNotFoundError:
+        return False, f'Application "{app_name}" not found'
+    except Exception as error:
+        log_request('ERROR', f'open_app: {str(error)}')
+        return False, 'Failed to open application'
+
+
+def execute_run_command(command, shell_type='powershell', timeout=30):
+    command = (command or '').strip()
+    if not command:
+        return False, 'Command not provided', None
+    valid, error = validate_command(command)
+    if not valid:
+        return False, error, None
+
+    if platform.system() == 'Windows':
+        if (shell_type or 'powershell').lower() == 'powershell':
+            shell_cmd = ['powershell', '-NoProfile', '-Command', command]
+        else:
+            shell_cmd = ['cmd', '/c', command]
+    else:
+        shell_cmd = ['bash', '-c', command]
+
+    result = subprocess.run(
+        shell_cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        shell=False
+    )
+    output = (result.stdout or '')[:5000]
+    error_output = (result.stderr or '')[:5000] if result.returncode != 0 else None
+    if result.returncode == 0:
+        return True, output, None
+    return False, error_output or 'Command execution failed', output
+
+
+def execute_ping(host):
+    host = (host or '8.8.8.8').strip()
+    valid, error = validate_host(host)
+    if not valid:
+        return False, error, None
+
+    if platform.system() == 'Windows':
+        cmd = ['ping', '-n', '1', '-w', '3000', host]
+    else:
+        cmd = ['ping', '-c', '1', '-W', '3', host]
+
+    start_time = datetime.now()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=5, shell=False)
+    latency = round((datetime.now() - start_time).total_seconds() * 1000, 2)
+    if result.returncode == 0:
+        return True, 'Host is reachable', latency
+    return False, 'Host unreachable', latency
+
+
+def execute_http_check(url, method='GET', timeout=5):
+    url = (url or '').strip()
+    method = (method or 'GET').upper()
+    valid, error = validate_url(url)
+    if not valid:
+        return False, error, None
+    if method not in ('GET', 'HEAD'):
+        return False, f'Method "{method}" not allowed', None
+
+    import urllib.request
+    import urllib.error
+
+    request = urllib.request.Request(url, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return True, f'Status {response.status}', response.status
+    except urllib.error.HTTPError as error:
+        return False, f'Status {error.code}', error.code
+    except Exception:
+        return False, 'HTTP check failed', None
+
+
+def execute_docker_command(docker_action, container):
+    docker_action = (docker_action or '').strip()
+    container = (container or '').strip()
+    valid, error = validate_docker_container(container)
+    if not valid:
+        return False, error, None
+
+    if docker_action == 'status' and container in ('*', 'all'):
+        command = 'docker ps -a'
+    else:
+        commands = {
+            'start': f'docker start {container}',
+            'stop': f'docker stop {container}',
+            'restart': f'docker restart {container}',
+            'status': f'docker ps -a --filter name={container}'
+        }
+        command = commands.get(docker_action)
+        if not command:
+            return False, 'Unknown Docker action', None
+
+    success, message, output = execute_run_command(command, 'powershell', timeout=30)
+    return success, message, output
+
+
+def execute_copy_text(text):
+    if not isinstance(text, str) or text == '':
+        return False, 'No text to copy'
+    if len(text) > 4096:
+        return False, 'Text exceeds maximum length'
+
+    try:
+        if platform.system() == 'Windows':
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', '[Console]::In.ReadToEnd() | Set-Clipboard'],
+                input=text,
+                text=True,
+                timeout=5,
+                capture_output=True
+            )
+            if result.returncode != 0:
+                return False, 'Failed to copy text'
+        else:
+            result = subprocess.run(['xclip', '-selection', 'clipboard'], input=text, text=True, timeout=5)
+            if result.returncode != 0:
+                return False, 'Failed to copy text (xclip required)'
+        return True, 'Text copied to clipboard'
+    except FileNotFoundError:
+        return False, 'Clipboard tool not available'
+    except subprocess.TimeoutExpired:
+        return False, 'Clipboard timeout'
+
 @app.route('/api/health', methods=['GET'])
 @rate_limit
 def health_check():
@@ -215,6 +625,54 @@ def get_system_stats():
             'error': 'Failed to retrieve system stats'
         }), 500
 
+@app.route('/api/obs-control', methods=['POST'])
+@rate_limit
+def obs_control():
+    """Control OBS through its OBS WebSocket 5 server."""
+    data = request.get_json(silent=True) or {}
+    success, message = execute_obs_action(data)
+    return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
+
+@app.route('/api/obs-status', methods=['POST'])
+@rate_limit
+def obs_status():
+    """Check OBS WebSocket connectivity and current recording state."""
+    data = request.get_json(silent=True) or {}
+
+    try:
+        import obsws_python  # noqa: F401 - availability check
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'connected': False,
+            'error': 'obsws-python is not installed (pip install obsws-python)'
+        }), 503
+
+    client = None
+    try:
+        client = _obs_connect(data)
+        version = client.get_version()
+        record = client.get_record_status()
+        return jsonify({
+            'success': True,
+            'connected': True,
+            'obs_version': _obs_get_field(version, 'obs_version', 'obsVersion') or 'unknown',
+            'websocket_version': _obs_get_field(version, 'obs_web_socket_version', 'obsWebSocketVersion') or '',
+            'recording': bool(_obs_get_field(record, 'output_active', 'outputActive')),
+            'message': 'OBS connected'
+        })
+    except ValueError as error:
+        return jsonify({'success': False, 'connected': False, 'error': str(error)}), 400
+    except Exception as error:
+        log_request('ERROR', f'OBS status: {str(error)}')
+        return jsonify({
+            'success': False,
+            'connected': False,
+            'error': 'Cannot reach OBS. Is it running with WebSocket enabled (Tools > WebSocket Server Settings)?'
+        }), 503
+    finally:
+        _obs_disconnect(client)
+
 @app.route('/api/open-app', methods=['POST'])
 @rate_limit
 def open_application():
@@ -231,70 +689,14 @@ def open_application():
 
     log_request('POST /api/open-app', f'app={app_name}')
 
-    if not app_name:
-        return jsonify({
-            'success': False,
-            'error': 'Application name not provided'
-        }), 400
-
-    # Validate app name
-    valid, error = validate_app_name(app_name)
-    if not valid:
-        return jsonify({
-            'success': False,
-            'error': error
-        }), 400
-
-    # Validate arguments
-    valid, error = validate_arguments(args)
-    if not valid:
-        return jsonify({
-            'success': False,
-            'error': error
-        }), 400
-
-    try:
-        # Handle common application shortcuts
-        app_shortcuts = {
-            'code': 'code',
-            'vscode': 'code',
-            'chrome': 'chrome.exe' if platform.system() == 'Windows' else 'google-chrome',
-            'firefox': 'firefox.exe' if platform.system() == 'Windows' else 'firefox',
-            'terminal': 'wt.exe' if platform.system() == 'Windows' else 'gnome-terminal',
-            'notepad': 'notepad.exe' if platform.system() == 'Windows' else 'gedit',
-            'calc': 'calc.exe' if platform.system() == 'Windows' else 'gnome-calculator',
-            'explorer': 'explorer.exe' if platform.system() == 'Windows' else 'nautilus'
-        }
-
-        # Resolve shortcut if exists
-        resolved_app = app_shortcuts.get(app_name.lower(), app_name)
-
-        # Build command as list (safe, no shell injection)
-        cmd = [resolved_app] + args
-
-        # Start process - NO shell=True for security
-        if platform.system() == 'Windows':
-            subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS)
-        else:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        return jsonify({
-            'success': True,
-            'app': app_name,
-            'message': f'Successfully opened {app_name}'
-        })
-    except FileNotFoundError:
-        return jsonify({
-            'success': False,
-            'error': f'Application "{app_name}" not found'
-        }), 404
-    except Exception as e:
-        # Don't expose internal error details
-        log_request('ERROR', f'open_application: {str(e)}')
-        return jsonify({
-            'success': False,
-            'error': 'Failed to open application'
-        }), 500
+    success, message = execute_open_app(app_name, args)
+    status = 200 if success else 400
+    return jsonify({
+        'success': success,
+        'app': app_name,
+        'message': message if success else None,
+        'error': None if success else message
+    }), status
 
 @app.route('/api/run-command', methods=['POST'])
 @rate_limit
@@ -503,12 +905,55 @@ def http_proxy():
 
 # ===== ESP32 Integration Endpoints =====
 
-# Store current profile for ESP32 sync
-current_profile = {
-    "name": "Default Profile",
-    "size": "cyd",
-    "buttons": []
-}
+# Profile persistence: survive server restarts so the ESP32 device keeps
+# its buttons even when the companion server is restarted.
+PROFILE_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'profile_state.json')
+
+
+def _load_persisted_profile():
+    """Load the last synced profile from disk (fallback: OBS-ready default)."""
+    try:
+        if os.path.exists(PROFILE_STATE_FILE):
+            with open(PROFILE_STATE_FILE, 'r', encoding='utf-8') as file_handle:
+                data = json.load(file_handle)
+                if isinstance(data, dict) and 'buttons' in data:
+                    return data
+    except Exception as error:
+        log_request('ERROR', f'load persisted profile: {str(error)}')
+
+    # Fallback default: OBS Studio profile so a fresh install is useful
+    return {
+        "name": "OBS Studio",
+        "size": "cyd",
+        "rows": 3,
+        "cols": 4,
+        "buttons": [
+            {"label": "OBS", "icon": "🎥", "color": "#302e31", "action": {"type": "open_app", "app": "obs64.exe"}},
+            {"label": "Scene: Game", "icon": "🎮", "color": "#2496ed", "action": {"type": "obs_control", "operation": "set_scene", "scene": "Game"}},
+            {"label": "Scene: Chat", "icon": "💬", "color": "#6264a7", "action": {"type": "obs_control", "operation": "set_scene", "scene": "Chatting"}},
+            {"label": "Scene: Desktop", "icon": "🖥️", "color": "#007acc", "action": {"type": "obs_control", "operation": "set_scene", "scene": "Desktop"}},
+            {"label": "Camera On", "icon": "📷", "color": "#1db954", "action": {"type": "obs_control", "operation": "set_source_visibility", "scene": "Game", "source": "Camera", "visible": True}},
+            {"label": "Camera Off", "icon": "🚫", "color": "#3e1a1a", "action": {"type": "obs_control", "operation": "set_source_visibility", "scene": "Game", "source": "Camera", "visible": False}},
+            {"label": "Start Rec", "icon": "⏺️", "color": "#ff0000", "action": {"type": "obs_control", "operation": "start_recording"}},
+            {"label": "Stop Rec", "icon": "⏹️", "color": "#8a1a1a", "action": {"type": "obs_control", "operation": "stop_recording"}},
+            {"label": "Rec Toggle", "icon": "⏯️", "color": "#ea4335", "action": {"type": "obs_control", "operation": "toggle_recording"}},
+            {"label": "Scene", "icon": "🖥️", "color": "#1a2e3e", "action": {"type": "obs_control", "operation": "set_scene", "scene": "Scene"}},
+            {"label": "Pause Rec", "icon": "⏸️", "color": "#8a6a1a", "action": {"type": "obs_control", "operation": "toggle_recording"}},
+            {"label": "Stop Only", "icon": "⏹️", "color": "#5a1a1a", "action": {"type": "obs_control", "operation": "stop_recording"}}
+        ]
+    }
+
+
+def _persist_profile(profile):
+    """Save the current profile to disk (best-effort)."""
+    try:
+        with open(PROFILE_STATE_FILE, 'w', encoding='utf-8') as file_handle:
+            json.dump(profile, file_handle, ensure_ascii=False)
+    except Exception as error:
+        log_request('ERROR', f'persist profile: {str(error)}')
+
+
+current_profile = _load_persisted_profile()
 
 @app.route('/api/get-profile', methods=['GET'])
 def get_profile():
@@ -531,6 +976,7 @@ def set_profile():
         }), 400
 
     current_profile = data
+    _persist_profile(current_profile)
 
     return jsonify({
         'success': True,
@@ -571,80 +1017,80 @@ def execute_action():
         }), 400
 
     try:
-        # Execute based on action type
         if action_type == 'open_url':
             url = action_config.get('url', '').strip()
-            
-            # Validate URL
             valid, error = validate_url(url)
             if not valid:
-                return jsonify({
-                    'success': False,
-                    'error': f'Invalid URL: {error}'
-                }), 400
-            
+                return jsonify({'success': False, 'error': f'Invalid URL: {error}'}), 400
             import webbrowser
             webbrowser.open(url)
-            return jsonify({'success': True, 'message': f'Opened URL'})
+            return jsonify({'success': True, 'message': 'Opened URL'})
 
         elif action_type == 'open_app':
-            app_name = action_config.get('app', '').strip()
-            
-            # Validate app name
-            valid, error = validate_app_name(app_name)
-            if not valid:
-                return jsonify({
-                    'success': False,
-                    'error': error
-                }), 400
-            
-            # Use shortcuts
-            app_shortcuts = {
-                'code': 'code',
-                'vscode': 'code',
-                'chrome': 'chrome.exe' if platform.system() == 'Windows' else 'google-chrome',
-            }
-            resolved_app = app_shortcuts.get(app_name.lower(), app_name)
-            
-            # NO shell=True for security
-            if platform.system() == 'Windows':
-                subprocess.Popen([resolved_app], creationflags=subprocess.DETACHED_PROCESS)
-            else:
-                subprocess.Popen([resolved_app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            return jsonify({'success': True, 'message': f'Opened {app_name}'})
+            success, message = execute_open_app(action_config.get('app', ''), action_config.get('args', []))
+            return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
 
         elif action_type == 'run_command':
-            command = action_config.get('command', '').strip()
-            shell_type = action_config.get('shell', 'powershell')
-            
-            # Validate command
-            valid, error = validate_command(command)
-            if not valid:
-                return jsonify({
-                    'success': False,
-                    'error': error
-                }), 400
+            success, message, output = execute_run_command(
+                action_config.get('command', ''),
+                action_config.get('shell', 'powershell')
+            )
+            return jsonify({
+                'success': success,
+                'message': message if success else None,
+                'output': output if success else message,
+                'error': None if success else message
+            }), (200 if success else 400)
 
-            if command:
-                if platform.system() == 'Windows':
-                    shell_cmd = ['powershell', '-NoProfile', '-Command', command] if shell_type == 'powershell' else ['cmd', '/c', command]
-                else:
-                    shell_cmd = ['bash', '-c', command]
+        elif action_type == 'obs_control':
+            success, message = execute_obs_action({
+                **action_config,
+                'operation': action_config.get('operation', '')
+            })
+            return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
 
-                result = subprocess.run(
-                    shell_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    shell=False
-                )
-                
-                return jsonify({
-                    'success': result.returncode == 0,
-                    'output': result.stdout[:2000],
-                    'error': result.stderr[:2000] if result.returncode != 0 else None
-                })
+        elif action_type == 'ping':
+            success, message, latency = execute_ping(action_config.get('host', '8.8.8.8'))
+            return jsonify({
+                'success': success,
+                'message': message,
+                'latency': latency,
+                'error': None if success else message
+            }), (200 if success else 400)
+
+        elif action_type == 'http_check':
+            success, message, status = execute_http_check(
+                action_config.get('url', ''),
+                action_config.get('method', 'GET')
+            )
+            return jsonify({
+                'success': success,
+                'message': message,
+                'status': status,
+                'error': None if success else message
+            }), (200 if success else 400)
+
+        elif action_type == 'docker_command':
+            success, message, output = execute_docker_command(
+                action_config.get('dockerAction', ''),
+                action_config.get('container', '')
+            )
+            return jsonify({
+                'success': success,
+                'message': message if success else None,
+                'output': output if success else message,
+                'error': None if success else message
+            }), (200 if success else 400)
+
+        elif action_type == 'copy_text':
+            success, message = execute_copy_text(action_config.get('text', ''))
+            return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
+
+        elif action_type in ('custom', 'navigate', 'macro', 'widget'):
+            return jsonify({
+                'success': False,
+                'error': f'Action type "{action_type}" can only run in the browser simulator'
+            }), 400
 
         return jsonify({
             'success': False,
@@ -686,6 +1132,15 @@ def internal_error(error):
     }), 500
 
 if __name__ == '__main__':
+    # Make console output encoding-safe on Windows (prevents UnicodeEncodeError
+    # with cp1252/cp850 consoles or redirected output when printing emojis)
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            if _stream and hasattr(_stream, 'reconfigure'):
+                _stream.reconfigure(errors='replace')
+        except Exception:
+            pass
+
     print("=" * 70)
     print("StreamDeck Companion Server v2.0.0")
     print("=" * 70)
