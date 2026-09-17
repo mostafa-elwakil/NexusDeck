@@ -30,7 +30,7 @@
 
 // WiFi Configuration
 // WiFi and server values are stored in the ignored include/config.h file.
-const int SYNC_INTERVAL = 5000; // Sync every 5 seconds
+const int SYNC_INTERVAL = 1000; // Sync every 1 second (near real-time)
 
 // Grid Configuration (4x3 for CYD)
 #define GRID_COLS 4
@@ -42,9 +42,14 @@ const int SYNC_INTERVAL = 5000; // Sync every 5 seconds
 #define SCREEN_HEIGHT 240
 #define BUTTON_PADDING 4
 
-// Calculate button dimensions
+// Status bar + button grid layout
+#define STATUS_BAR_HEIGHT 18
+#define GRID_Y_OFFSET STATUS_BAR_HEIGHT
+#define GRID_HEIGHT (SCREEN_HEIGHT - STATUS_BAR_HEIGHT)
+
+// Calculate button dimensions (grid sits below the status bar)
 #define BUTTON_WIDTH ((SCREEN_WIDTH - (BUTTON_PADDING * (GRID_COLS + 1))) / GRID_COLS)
-#define BUTTON_HEIGHT ((SCREEN_HEIGHT - (BUTTON_PADDING * (GRID_ROWS + 1))) / GRID_ROWS)
+#define BUTTON_HEIGHT ((GRID_HEIGHT - (BUTTON_PADDING * (GRID_ROWS + 1))) / GRID_ROWS)
 
 // ===== Objects =====
 TFT_eSPI tft = TFT_eSPI();
@@ -61,19 +66,35 @@ struct Button {
     bool hasWidget;
     String widgetType;
     uint8_t state; // 0=idle, 1=pressed, 2=running, 3=success, 4=error
+    bool timerRunning;
+    int timerRemaining;
+    int timerDuration;
+    unsigned long timerLastTick;
 };
 
 Button buttons[BUTTON_COUNT];
 
+struct ButtonResetSchedule {
+    uint8_t index;
+    unsigned long resetAt;
+    bool active;
+};
+
 // ===== State Variables =====
 unsigned long lastSyncTime = 0;
 unsigned long lastWidgetUpdate = 0;
+unsigned long lastStatusBarDraw = 0;
+unsigned long lastRunningBlink = 0;
+unsigned long touchDebounceUntil = 0;
+bool runningBlinkOn = false;
 int8_t lastPressedButton = -1;
 bool wifiConnected = false;
 bool serverAvailable = false;
 int cpuPercent = 0;
 int ramPercent = 0;
 unsigned long lastStatsFetch = 0;
+String currentProfileName = "StreamDeck";
+ButtonResetSchedule buttonReset = {255, 0, false};
 
 // ===== Function Declarations =====
 void setupWiFi();
@@ -91,6 +112,10 @@ uint16_t parseColor(String colorHex);
 void drawStatusBar();
 void updateSystemStats();
 String displayIcon(const String& icon);
+void scheduleButtonReset(uint8_t index, unsigned long delayMs);
+void processButtonResets();
+void updateRunningIndicators();
+String truncateText(const String& text, uint8_t maxLen);
 
 // ===== Setup =====
 void setup() {
@@ -116,7 +141,12 @@ void setup() {
         buttons[i].actionType = "";
         buttons[i].actionData = "";
         buttons[i].hasWidget = false;
+        buttons[i].widgetType = "";
         buttons[i].state = 0;
+        buttons[i].timerRunning = false;
+        buttons[i].timerRemaining = 0;
+        buttons[i].timerDuration = 300;
+        buttons[i].timerLastTick = 0;
     }
 
     // Draw initial UI
@@ -129,6 +159,9 @@ void setup() {
 // ===== Main Loop =====
 void loop() {
     unsigned long currentTime = millis();
+
+    processButtonResets();
+    updateRunningIndicators();
 
     // Handle touch input
     handleTouch();
@@ -143,6 +176,12 @@ void loop() {
     if (currentTime - lastWidgetUpdate > 1000) {
         updateWidgets();
         lastWidgetUpdate = currentTime;
+    }
+
+    // Refresh status bar periodically (CPU/RAM/profile name)
+    if (currentTime - lastStatusBarDraw > 5000) {
+        drawStatusBar();
+        lastStatusBarDraw = currentTime;
     }
 
     delay(10);
@@ -234,7 +273,7 @@ void drawButton(uint8_t index) {
     uint8_t row = index / GRID_COLS;
 
     int16_t x = BUTTON_PADDING + col * (BUTTON_WIDTH + BUTTON_PADDING);
-    int16_t y = BUTTON_PADDING + row * (BUTTON_HEIGHT + BUTTON_PADDING);
+    int16_t y = GRID_Y_OFFSET + BUTTON_PADDING + row * (BUTTON_HEIGHT + BUTTON_PADDING);
 
     Button& btn = buttons[index];
 
@@ -247,8 +286,8 @@ void drawButton(uint8_t index) {
             (((bgColor >> 5) & 0x3F) * 0.7),
             ((bgColor & 0x1F) * 0.7)
         );
-    } else if (btn.state == 2) { // Running
-        // Blinking effect (handled in main loop)
+    } else if (btn.state == 2 && runningBlinkOn) { // Running pulse
+        bgColor = tft.color565(30, 90, 180);
     } else if (btn.state == 3) { // Success
         bgColor = TFT_GREEN;
     } else if (btn.state == 4) { // Error
@@ -258,21 +297,30 @@ void drawButton(uint8_t index) {
     // Draw button rectangle
     tft.fillRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, bgColor);
 
-    // Draw border
-    tft.drawRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, TFT_WHITE);
+    uint16_t borderColor = TFT_WHITE;
+    if (btn.state == 2) {
+        borderColor = runningBlinkOn ? TFT_CYAN : TFT_DARKGREY;
+    } else if (btn.state == 3) {
+        borderColor = TFT_GREEN;
+    } else if (btn.state == 4) {
+        borderColor = TFT_RED;
+    }
+
+    tft.drawRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, borderColor);
 
     // Draw icon (if exists)
     if (btn.icon.length() > 0) {
         tft.setTextColor(TFT_WHITE, bgColor);
         tft.setTextDatum(MC_DATUM);
-        tft.drawString(displayIcon(btn.icon), x + BUTTON_WIDTH/2, y + BUTTON_HEIGHT/2 - 10, 2);
+        tft.drawString(truncateText(displayIcon(btn.icon), 8), x + BUTTON_WIDTH/2, y + BUTTON_HEIGHT/3, 2);
     }
 
     // Draw label
     if (btn.label.length() > 0) {
         tft.setTextColor(TFT_WHITE, bgColor);
         tft.setTextDatum(MC_DATUM);
-        tft.drawString(btn.label, x + BUTTON_WIDTH/2, y + BUTTON_HEIGHT - 12, 2);
+        int labelY = (btn.icon.length() > 0) ? (y + (BUTTON_HEIGHT * 2) / 3) : (y + BUTTON_HEIGHT / 2);
+        tft.drawString(truncateText(btn.label, 10), x + BUTTON_WIDTH/2, labelY, 2);
     }
 }
 
@@ -300,23 +348,17 @@ void handleTouch() {
 
         int8_t buttonIndex = getTouchedButton(x, y);
 
-        if (buttonIndex >= 0 && buttonIndex != lastPressedButton) {
+        if (buttonIndex >= 0 && buttonIndex != lastPressedButton &&
+            millis() >= touchDebounceUntil) {
             lastPressedButton = buttonIndex;
+            touchDebounceUntil = millis() + 280;
 
             Serial.print("Button pressed: ");
             Serial.println(buttonIndex);
 
-            // Visual feedback
-            setButtonState(buttonIndex, 1); // Pressed state
+            setButtonState(buttonIndex, 1);
             drawButton(buttonIndex);
-
-            // Execute action
             executeButtonAction(buttonIndex);
-
-            // Reset after delay
-            delay(200);
-            setButtonState(buttonIndex, 0); // Idle state
-            drawButton(buttonIndex);
         }
     } else {
         lastPressedButton = -1;
@@ -330,7 +372,7 @@ int8_t getTouchedButton(uint16_t x, uint16_t y) {
         uint8_t row = i / GRID_COLS;
 
         int16_t btnX = BUTTON_PADDING + col * (BUTTON_WIDTH + BUTTON_PADDING);
-        int16_t btnY = BUTTON_PADDING + row * (BUTTON_HEIGHT + BUTTON_PADDING);
+        int16_t btnY = GRID_Y_OFFSET + BUTTON_PADDING + row * (BUTTON_HEIGHT + BUTTON_PADDING);
 
         if (x >= btnX && x <= btnX + BUTTON_WIDTH &&
             y >= btnY && y <= btnY + BUTTON_HEIGHT) {
@@ -348,22 +390,54 @@ void executeButtonAction(uint8_t index) {
 
     if (!wifiConnected || !serverAvailable) {
         Serial.println("Cannot execute action - server not available");
-        setButtonState(index, 4); // Error state
+        setButtonState(index, 4);
         drawButton(index);
-        delay(500);
-        setButtonState(index, 0);
-        drawButton(index);
+        scheduleButtonReset(index, 600);
         return;
     }
 
-    if (btn.actionType.length() == 0) {
+    if (btn.actionType.length() == 0 && !btn.hasWidget) {
         Serial.println("No action configured for this button");
+        scheduleButtonReset(index, 180);
         return;
     }
 
-    if (btn.actionType == "custom" || btn.actionType == "widget" ||
+    if (btn.hasWidget) {
+        if (btn.widgetType == "timer") {
+            btn.timerRunning = !btn.timerRunning;
+            btn.timerLastTick = millis();
+            if (btn.timerRemaining <= 0) {
+                btn.timerRemaining = (btn.timerDuration > 0) ? btn.timerDuration : 300;
+            }
+            btn.icon = btn.timerRunning ? "PAUSE" : "PLAY";
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d:%02d", btn.timerRemaining / 60, btn.timerRemaining % 60);
+            btn.label = String(buf);
+            Serial.printf("Timer button %d toggled. Running=%d Remaining=%d\n", index, btn.timerRunning, btn.timerRemaining);
+            setButtonState(index, 3);
+            drawButton(index);
+            scheduleButtonReset(index, 250);
+            return;
+        } else if (btn.widgetType == "stopwatch") {
+            btn.timerRunning = !btn.timerRunning;
+            btn.timerLastTick = millis();
+            btn.icon = btn.timerRunning ? "PAUSE" : "PLAY";
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d:%02d", btn.timerRemaining / 60, btn.timerRemaining % 60);
+            btn.label = String(buf);
+            setButtonState(index, 3);
+            drawButton(index);
+            scheduleButtonReset(index, 250);
+            return;
+        }
+    }
+
+    if (btn.hasWidget || btn.actionType == "widget" || btn.actionType == "custom" ||
         btn.actionType == "navigate" || btn.actionType == "macro") {
-        Serial.println("This action runs only in the browser simulator");
+        Serial.println("Widget/Custom action triggered on ESP32");
+        setButtonState(index, 3); // Success state
+        drawButton(index);
+        scheduleButtonReset(index, 500);
         return;
     }
 
@@ -411,10 +485,7 @@ void executeButtonAction(uint8_t index) {
 
     http.end();
     drawButton(index);
-
-    delay(800);
-    setButtonState(index, 0); // Reset to idle
-    drawButton(index);
+    scheduleButtonReset(index, 800);
 }
 
 // ===== Sync Profile from Server =====
@@ -433,6 +504,7 @@ void syncProfile() {
         // Get profile data
         http.end();
         http.begin(String(SERVER_URL) + "/api/get-profile");
+        http.addHeader("X-StreamDeck-Client", "esp32");
         httpCode = http.GET();
 
         if (httpCode == 200) {
@@ -445,6 +517,10 @@ void syncProfile() {
                 Serial.print("Profile JSON parse failed: ");
                 Serial.println(error.c_str());
             } else if (doc.containsKey("buttons")) {
+                if (doc.containsKey("name")) {
+                    currentProfileName = doc["name"].as<String>();
+                }
+
                 JsonArray buttonsArray = doc["buttons"];
                 String profileSignature;
 
@@ -481,6 +557,33 @@ void syncProfile() {
                     if (btnObj.containsKey("widget") && btnObj["widget"].is<JsonObject>()) {
                         buttons[i].hasWidget = true;
                         buttons[i].widgetType = btnObj["widget"]["type"] | "";
+                        if (buttons[i].widgetType == "timer") {
+                            if (!buttons[i].timerRunning) {
+                                int colonIdx = buttons[i].label.indexOf(':');
+                                if (colonIdx > 0) {
+                                    int m = buttons[i].label.substring(0, colonIdx).toInt();
+                                    int s = buttons[i].label.substring(colonIdx + 1).toInt();
+                                    buttons[i].timerDuration = (m * 60) + s;
+                                }
+                                if (buttons[i].timerDuration <= 0) {
+                                    buttons[i].timerDuration = 300;
+                                }
+                                buttons[i].timerRemaining = buttons[i].timerDuration;
+                                char buf[16];
+                                snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                                buttons[i].label = String(buf);
+                                if (buttons[i].icon.length() == 0) {
+                                    buttons[i].icon = "PLAY";
+                                }
+                            }
+                        } else if (buttons[i].widgetType == "stopwatch") {
+                            if (!buttons[i].timerRunning && buttons[i].timerRemaining == 0) {
+                                buttons[i].label = "00:00";
+                                if (buttons[i].icon.length() == 0) {
+                                    buttons[i].icon = "PLAY";
+                                }
+                            }
+                        }
                     }
 
                     profileSignature += buttons[i].label + "|" + buttons[i].icon + "|" +
@@ -515,8 +618,41 @@ void updateWidgets() {
 
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         if (buttons[i].hasWidget) {
-            if (buttons[i].widgetType == "clock") {
-                // Update clock widget (would need RTC or NTP time)
+            if (buttons[i].widgetType == "timer") {
+                if (buttons[i].timerRunning) {
+                    if (millis() - buttons[i].timerLastTick >= 1000) {
+                        buttons[i].timerLastTick = millis();
+                        if (buttons[i].timerRemaining > 0) {
+                            buttons[i].timerRemaining--;
+                        } else {
+                            buttons[i].timerRunning = false;
+                            buttons[i].icon = "PLAY";
+                        }
+                        char buf[16];
+                        snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                        buttons[i].label = String(buf);
+                        needsRedraw = true;
+                    }
+                }
+            } else if (buttons[i].widgetType == "stopwatch") {
+                if (buttons[i].timerRunning) {
+                    if (millis() - buttons[i].timerLastTick >= 1000) {
+                        buttons[i].timerLastTick = millis();
+                        buttons[i].timerRemaining++;
+                        char buf[16];
+                        snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                        buttons[i].label = String(buf);
+                        needsRedraw = true;
+                    }
+                }
+            } else if (buttons[i].widgetType == "clock") {
+                unsigned long secs = (millis() / 1000) % 86400;
+                int h = (secs / 3600) % 24;
+                int m = (secs % 3600) / 60;
+                int s = secs % 60;
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%02d:%02d:%02d", h, m, s);
+                buttons[i].label = String(buf);
                 needsRedraw = true;
             } else if (buttons[i].widgetType == "uptime") {
                 // Update uptime
@@ -537,6 +673,7 @@ void updateWidgets() {
         for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
             if (buttons[i].hasWidget) drawButton(i);
         }
+        drawStatusBar();
     }
 }
 
@@ -558,6 +695,12 @@ void updateSystemStats() {
 }
 
 String displayIcon(const String& icon) {
+    if (icon == "PLAY" || icon == "▶" || icon == "▶️") return ">";
+    if (icon == "PAUSE" || icon == "⏸" || icon == "⏸️") return "||";
+    if (icon == "STOP" || icon == "⏹" || icon == "⏹️") return "[]";
+    if (icon == "TMR" || icon == "⏲" || icon == "⏲️") return "TMR";
+    if (icon == "TIME" || icon == "🕐" || icon == "🕒") return "TIME";
+    if (icon == "SW" || icon == "⏱" || icon == "⏱️") return "SW";
     if (icon == "💻") return "PC";
     if (icon == "⚡") return "CMD";
     if (icon == "🐳") return "DOCKER";
@@ -565,11 +708,9 @@ String displayIcon(const String& icon) {
     if (icon == "🌐") return "WEB";
     if (icon == "📡") return "PING";
     if (icon == "📊") return "STAT";
-    if (icon == "🕐") return "TIME";
     if (icon == "🔄") return "RESTART";
     if (icon == "📋") return "LIST";
     if (icon == "🗑️") return "CLEAR";
-    if (icon == "⏱️") return "UP";
     if (icon == "🔥") return "CPU";
     if (icon == "💾") return "RAM";
     if (icon == "🎥") return "OBS";
@@ -579,10 +720,7 @@ String displayIcon(const String& icon) {
     if (icon == "📷") return "CAM";
     if (icon == "🚫") return "OFF";
     if (icon == "⏺️") return "REC";
-    if (icon == "⏹️") return "STOP";
     if (icon == "⏯️") return "TOG";
-    if (icon == "⏲️") return "TMR";
-    if (icon == "▶️") return "PLAY";
     return icon;
 }
 
@@ -609,11 +747,79 @@ uint16_t parseColor(String colorHex) {
     return tft.color565(r, g, b);
 }
 
+String truncateText(const String& text, uint8_t maxLen) {
+    if (text.length() <= maxLen) {
+        return text;
+    }
+    if (maxLen <= 1) {
+        return text.substring(0, maxLen);
+    }
+    return text.substring(0, maxLen - 1) + "~";
+}
+
+void scheduleButtonReset(uint8_t index, unsigned long delayMs) {
+    buttonReset.index = index;
+    buttonReset.resetAt = millis() + delayMs;
+    buttonReset.active = true;
+}
+
+void processButtonResets() {
+    if (!buttonReset.active) {
+        return;
+    }
+
+    if ((long)(millis() - buttonReset.resetAt) >= 0) {
+        if (buttonReset.index < BUTTON_COUNT) {
+            setButtonState(buttonReset.index, 0);
+            drawButton(buttonReset.index);
+        }
+        buttonReset.active = false;
+    }
+}
+
+void updateRunningIndicators() {
+    bool hasRunning = false;
+    for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+        if (buttons[i].state == 2) {
+            hasRunning = true;
+            break;
+        }
+    }
+
+    if (!hasRunning) {
+        return;
+    }
+
+    if (millis() - lastRunningBlink >= 350) {
+        runningBlinkOn = !runningBlinkOn;
+        lastRunningBlink = millis();
+
+        for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+            if (buttons[i].state == 2) {
+                drawButton(i);
+            }
+        }
+    }
+}
+
 // ===== Draw Status Bar =====
 void drawStatusBar() {
-    // Small status indicator in corner
-    uint8_t statusSize = 8;
-    uint16_t statusColor = wifiConnected ? (serverAvailable ? TFT_GREEN : TFT_YELLOW) : TFT_RED;
+    tft.fillRect(0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT, TFT_BLACK);
+    tft.drawFastHLine(0, STATUS_BAR_HEIGHT - 1, SCREEN_WIDTH, TFT_DARKGREY);
 
-    tft.fillCircle(SCREEN_WIDTH - 12, 12, statusSize/2, statusColor);
+    uint16_t wifiColor = wifiConnected ? TFT_GREEN : TFT_RED;
+    uint16_t serverColor = serverAvailable ? TFT_GREEN : (wifiConnected ? TFT_YELLOW : TFT_DARKGREY);
+
+    tft.fillCircle(7, STATUS_BAR_HEIGHT / 2, 3, wifiColor);
+    tft.fillCircle(18, STATUS_BAR_HEIGHT / 2, 3, serverColor);
+
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString(truncateText(currentProfileName, 14), 28, STATUS_BAR_HEIGHT / 2 + 1, 1);
+
+    if (wifiConnected) {
+        String stats = String(cpuPercent) + "% " + String(ramPercent) + "%";
+        tft.setTextDatum(MR_DATUM);
+        tft.drawString(stats, SCREEN_WIDTH - 4, STATUS_BAR_HEIGHT / 2 + 1, 1);
+    }
 }

@@ -12,6 +12,21 @@ class StudioUI {
         this.selectedButton = null;
         this.editorMode = 'player'; // 'player' or 'studio'
         this.theme = localStorage.getItem('streamdeck_theme') || 'dark';
+        this.deviceStatusTimer = null;
+        this.obsHandlers = { operationChange: null, testClick: null };
+
+        this.iconPresets = [
+            '💻', '⚡', '🐳', '🐙', '🌐', '📡', '🎥', '🎮', '💬', '🖥️',
+            '📷', '⏺️', '⏹️', '⏯️', '▶️', '⏱️', '⏲️', '🕐', '🔥', '💾',
+            '🗑️', '📋', '📝', '📧', '📅', '🎵', '📺', '📸', '🔢', '⚙️'
+        ];
+
+        this.presetFiles = [
+            { file: 'obs_profile.json', label: 'OBS Studio' },
+            { file: 'devops_profile.json', label: 'DevOps' },
+            { file: 'media_profile.json', label: 'Media' },
+            { file: 'productivity_profile.json', label: 'Productivity' }
+        ];
 
         this.init();
     }
@@ -31,7 +46,10 @@ class StudioUI {
         footer.className = 'app-footer';
         footer.innerHTML = `
             <p class="footer-hint"><kbd>Ctrl</kbd>+<kbd>E</kbd> studio · <kbd>Ctrl</kbd>+<kbd>S</kbd> save · click a key to run</p>
-            <div id="server-status" class="status-pill is-offline" role="status">Companion offline</div>
+            <div class="footer-status-group">
+                <div id="esp32-status" class="status-pill is-offline" role="status" title="ESP32 hardware sync">ESP32 offline</div>
+                <div id="server-status" class="status-pill is-offline" role="status">Companion offline</div>
+            </div>
         `;
         document.body.appendChild(footer);
 
@@ -40,6 +58,7 @@ class StudioUI {
         studioContainer.className = 'studio-hidden';
         studioContainer.appendChild(this.createInspector());
         studioContainer.appendChild(this.createProfilesPanel());
+        studioContainer.appendChild(this.createHistoryPanel());
         document.body.appendChild(studioContainer);
     }
 
@@ -119,8 +138,17 @@ class StudioUI {
                     </div>
 
                     <div class="form-group">
-                        <label>Icon (Emoji or HTML)</label>
-                        <input type="text" id="input-icon" class="form-control" placeholder="🎯 or <svg>...</svg>">
+                        <label>Icon (Emoji or text for CYD)</label>
+                        <input type="text" id="input-icon" class="form-control" placeholder="🎯 or OBS">
+                        <div id="icon-picker" class="icon-picker" role="listbox" aria-label="Icon presets"></div>
+                    </div>
+
+                    <div id="button-preview" class="button-preview" aria-label="Key preview">
+                        <div class="button-preview-face">
+                            <span class="button-preview-icon"></span>
+                            <span class="button-preview-label"></span>
+                        </div>
+                        <p class="button-preview-note"></p>
                     </div>
 
                     <div class="form-group">
@@ -181,12 +209,35 @@ class StudioUI {
                 <h3>Profiles</h3>
             </div>
             <div class="panel-content">
+                <div class="preset-section">
+                    <p class="panel-kicker">Quick templates</p>
+                    <div id="preset-templates-list" class="preset-templates-list"></div>
+                </div>
                 <div id="profiles-list" class="profiles-list">
                     <!-- Profiles will be populated here -->
                 </div>
                 <div class="panel-actions">
                     <button id="btn-new-profile" class="btn btn-block">+ New Profile</button>
                 </div>
+            </div>
+        `;
+        return panel;
+    }
+
+    createHistoryPanel() {
+        const panel = document.createElement('div');
+        panel.id = 'action-history-panel';
+        panel.className = 'action-history-panel';
+        panel.innerHTML = `
+            <div class="history-header">
+                <div>
+                    <p class="panel-kicker">Activity</p>
+                    <h3>Action History</h3>
+                </div>
+                <button id="btn-clear-history" class="close-btn" title="Clear history">⌫</button>
+            </div>
+            <div id="action-history-list" class="action-history-list">
+                <p class="history-empty">No actions yet. Press a key to run one.</p>
             </div>
         `;
         return panel;
@@ -304,9 +355,130 @@ class StudioUI {
 
         this.deck.container.addEventListener('action:serverStatus', (e) => {
             this.updateServerStatus(e.detail.available);
+            if (e.detail.available) {
+                this.pollDeviceStatus();
+            }
         });
 
+        this.deck.container.addEventListener('action:historyUpdated', () => {
+            this.refreshActionHistory();
+        });
+
+        document.getElementById('btn-clear-history')?.addEventListener('click', () => {
+            this.actions.clearHistory();
+            this.refreshActionHistory();
+        });
+
+        this.setupIconPicker();
+        this.setupInspectorPreviewListeners();
+        this.renderPresetTemplates();
         this.refreshProfilesList();
+        this.refreshActionHistory();
+        this.startDeviceStatusPolling();
+    }
+
+    setupIconPicker() {
+        const picker = document.getElementById('icon-picker');
+        if (!picker) return;
+
+        picker.innerHTML = this.iconPresets.map((icon) =>
+            `<button type="button" class="icon-preset-btn" data-icon="${this.escapeHtml(icon)}" title="${this.escapeHtml(icon)}">${icon}</button>`
+        ).join('');
+
+        picker.addEventListener('click', (event) => {
+            const button = event.target.closest('.icon-preset-btn');
+            if (!button) return;
+            const iconInput = document.getElementById('input-icon');
+            if (iconInput) {
+                iconInput.value = button.dataset.icon;
+                this.updateButtonPreview();
+            }
+        });
+    }
+
+    setupInspectorPreviewListeners() {
+        ['input-label', 'input-icon', 'input-color', 'input-color-text'].forEach((id) => {
+            document.getElementById(id)?.addEventListener('input', () => this.updateButtonPreview());
+        });
+    }
+
+    updateButtonPreview() {
+        const preview = document.getElementById('button-preview');
+        if (!preview) return;
+
+        const label = document.getElementById('input-label')?.value || '';
+        const icon = document.getElementById('input-icon')?.value || '';
+        const colorText = document.getElementById('input-color-text')?.value || '#1a1a2e';
+        const face = preview.querySelector('.button-preview-face');
+        const iconEl = preview.querySelector('.button-preview-icon');
+        const labelEl = preview.querySelector('.button-preview-label');
+        const noteEl = preview.querySelector('.button-preview-note');
+
+        if (face) {
+            face.style.background = colorText.startsWith('#') || colorText.startsWith('linear-gradient')
+                ? colorText
+                : '#1a1a2e';
+        }
+        if (iconEl) iconEl.textContent = icon || '◻';
+        if (labelEl) labelEl.textContent = label || 'Label';
+
+        if (noteEl) {
+            const warnings = [];
+            if (colorText.includes('gradient')) {
+                warnings.push('Gradient shows as solid color on CYD display');
+            }
+            if (icon && icon.length > 4 && !/[\u{1F300}-\u{1FAFF}]/u.test(icon)) {
+                warnings.push('Long text icons are truncated on CYD');
+            }
+            noteEl.textContent = warnings.join(' · ');
+            noteEl.style.display = warnings.length ? 'block' : 'none';
+        }
+    }
+
+    startDeviceStatusPolling() {
+        this.pollDeviceStatus();
+        if (this.deviceStatusTimer) {
+            clearInterval(this.deviceStatusTimer);
+        }
+        this.deviceStatusTimer = setInterval(() => this.pollDeviceStatus(), 5000);
+    }
+
+    async pollDeviceStatus() {
+        if (!this.actions.serverAvailable) {
+            this.updateEsp32Status(null);
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/device-status`);
+            if (!response.ok) return;
+            const data = await response.json();
+            this.updateEsp32Status(data.esp32 || null);
+        } catch (error) {
+            this.updateEsp32Status(null);
+        }
+    }
+
+    updateEsp32Status(esp32State) {
+        const pill = document.getElementById('esp32-status');
+        if (!pill) return;
+
+        if (!esp32State || !esp32State.last_sync) {
+            pill.classList.remove('is-online');
+            pill.classList.add('is-offline');
+            pill.textContent = 'ESP32 not synced';
+            pill.title = 'No ESP32 sync detected yet';
+            return;
+        }
+
+        const connected = !!esp32State.connected;
+        pill.classList.toggle('is-online', connected);
+        pill.classList.toggle('is-offline', !connected);
+
+        const ago = esp32State.seconds_ago != null ? `${Math.round(esp32State.seconds_ago)}s ago` : '';
+        const profile = esp32State.profile_name ? ` · ${esp32State.profile_name}` : '';
+        pill.textContent = connected ? `ESP32 synced ${ago}${profile}` : `ESP32 stale ${ago}`;
+        pill.title = `Last hardware sync: ${esp32State.last_sync}`;
     }
 
     updateServerStatus(available) {
@@ -315,6 +487,84 @@ class StudioUI {
         pill.classList.toggle('is-online', !!available);
         pill.classList.toggle('is-offline', !available);
         pill.textContent = available ? 'Companion online' : 'Companion offline';
+    }
+
+    renderPresetTemplates() {
+        const container = document.getElementById('preset-templates-list');
+        if (!container) return;
+
+        container.innerHTML = this.presetFiles.map((preset) =>
+            `<button type="button" class="preset-template-btn" data-file="${preset.file}">${this.escapeHtml(preset.label)}</button>`
+        ).join('');
+
+        container.querySelectorAll('.preset-template-btn').forEach((button) => {
+            button.addEventListener('click', () => this.importPresetTemplate(button.dataset.file));
+        });
+    }
+
+    async importPresetTemplate(fileName) {
+        try {
+            const candidates = [
+                `${this.actions.serverUrl}/presets/${fileName}`,
+                `./presets/${fileName}`,
+                `presets/${fileName}`
+            ];
+
+            let response = null;
+            for (const url of candidates) {
+                try {
+                    const attempt = await fetch(url);
+                    if (attempt.ok) {
+                        response = attempt;
+                        break;
+                    }
+                } catch (error) {
+                    // Try next candidate
+                }
+            }
+
+            if (!response) {
+                throw new Error('Preset file not found');
+            }
+
+            const profile = await response.json();
+            const imported = this.profiles.importProfile(JSON.stringify(profile));
+            if (imported) {
+                this.profiles.loadProfile(imported);
+                this.refreshProfilesList();
+                this.showToast(`Loaded template: ${imported.name}`);
+            }
+        } catch (error) {
+            this.showToast(`Failed to load template: ${error.message}`, 3000);
+        }
+    }
+
+    refreshActionHistory() {
+        const list = document.getElementById('action-history-list');
+        if (!list) return;
+
+        const history = this.actions.getHistory(20);
+        if (!history.length) {
+            list.innerHTML = '<p class="history-empty">No actions yet. Press a key to run one.</p>';
+            return;
+        }
+
+        list.innerHTML = history.map((entry) => {
+            const time = new Date(entry.timestamp).toLocaleTimeString();
+            const statusClass = entry.status === 'success' ? 'is-success' : 'is-error';
+            const label = this.escapeHtml(entry.buttonLabel || `Key ${entry.buttonIndex + 1}`);
+            const type = this.escapeHtml(entry.actionType || 'unknown');
+            const detail = entry.error ? `<span class="history-error">${this.escapeHtml(entry.error)}</span>` : '';
+            return `
+                <div class="history-item ${statusClass}">
+                    <div class="history-row">
+                        <strong>${label}</strong>
+                        <span class="history-time">${time}</span>
+                    </div>
+                    <div class="history-meta">${type}${detail}</div>
+                </div>
+            `;
+        }).join('');
     }
 
     applyTheme(theme) {
@@ -372,6 +622,7 @@ class StudioUI {
         const actionType = button.config.action?.type || '';
         document.getElementById('select-action-type').value = actionType;
         this.updateActionConfig(actionType, button.config.action);
+        this.updateButtonPreview();
 
         // Highlight selected button
         this.deck.getAllButtons().forEach(btn => {
@@ -390,6 +641,10 @@ class StudioUI {
         });
     }
 
+    attrValue(value) {
+        return this.escapeHtml(value ?? '');
+    }
+
     updateActionConfig(actionType, existingAction = null) {
         const configContainer = document.getElementById('action-config');
         configContainer.innerHTML = '';
@@ -398,19 +653,19 @@ class StudioUI {
             'open_url': `
                 <div class="form-group">
                     <label>URL</label>
-                    <input type="text" id="action-url" class="form-control" placeholder="https://example.com" value="${existingAction?.url || ''}">
+                    <input type="text" id="action-url" class="form-control" placeholder="https://example.com" value="${this.attrValue(existingAction?.url)}">
                 </div>
             `,
             'open_app': `
                 <div class="form-group">
                     <label>Application</label>
-                    <input type="text" id="action-app" class="form-control" placeholder="code, chrome.exe, notepad" value="${existingAction?.app || ''}">
+                    <input type="text" id="action-app" class="form-control" placeholder="code, chrome.exe, notepad" value="${this.attrValue(existingAction?.app)}">
                 </div>
             `,
             'run_command': `
                 <div class="form-group">
                     <label>Command</label>
-                    <textarea id="action-command" class="form-control" rows="3" placeholder="dir">${existingAction?.command || ''}</textarea>
+                    <textarea id="action-command" class="form-control" rows="3" placeholder="dir">${this.escapeHtml(existingAction?.command || '')}</textarea>
                 </div>
                 <div class="form-group">
                     <label>Shell</label>
@@ -433,11 +688,11 @@ class StudioUI {
                 </div>
                 <div class="form-group" id="obs-scene-group">
                     <label>Scene Name</label>
-                    <input type="text" id="action-obs-scene" class="form-control" placeholder="e.g. Gaming Scene" value="${existingAction?.scene || ''}">
+                    <input type="text" id="action-obs-scene" class="form-control" placeholder="e.g. Gaming Scene" value="${this.attrValue(existingAction?.scene)}">
                 </div>
                 <div class="form-group" id="obs-source-group">
                     <label>Source Name</label>
-                    <input type="text" id="action-obs-source" class="form-control" placeholder="e.g. Camera" value="${existingAction?.source || ''}">
+                    <input type="text" id="action-obs-source" class="form-control" placeholder="e.g. Camera" value="${this.attrValue(existingAction?.source)}">
                 </div>
                 <div class="form-group" id="obs-visible-group">
                     <label>Visibility</label>
@@ -448,9 +703,9 @@ class StudioUI {
                 </div>
                 <div class="form-group">
                     <label>OBS WebSocket Connection (optional)</label>
-                    <input type="text" id="action-obs-host" class="form-control" placeholder="Host (default: 127.0.0.1)" value="${existingAction?.host || ''}" style="margin-bottom: 6px;">
-                    <input type="text" id="action-obs-port" class="form-control" placeholder="Port (default: 4455)" value="${existingAction?.port || ''}" style="margin-bottom: 6px;">
-                    <input type="password" id="action-obs-password" class="form-control" placeholder="Password (if set in OBS)" value="${existingAction?.password || ''}">
+                    <input type="text" id="action-obs-host" class="form-control" placeholder="Host (default: 127.0.0.1)" value="${this.attrValue(existingAction?.host)}" style="margin-bottom: 6px;">
+                    <input type="text" id="action-obs-port" class="form-control" placeholder="Port (default: 4455)" value="${this.attrValue(existingAction?.port)}" style="margin-bottom: 6px;">
+                    <input type="password" id="action-obs-password" class="form-control" placeholder="Password (if set in OBS)" value="${this.attrValue(existingAction?.password)}">
                 </div>
                 <div class="form-group">
                     <button id="btn-obs-test" class="btn btn-secondary" type="button" style="width: 100%;">🔌 Test OBS Connection</button>
@@ -461,19 +716,19 @@ class StudioUI {
             'copy_text': `
                 <div class="form-group">
                     <label>Text to Copy</label>
-                    <textarea id="action-text" class="form-control" rows="3" placeholder="Text to copy...">${existingAction?.text || ''}</textarea>
+                    <textarea id="action-text" class="form-control" rows="3" placeholder="Text to copy...">${this.escapeHtml(existingAction?.text || '')}</textarea>
                 </div>
             `,
             'http_check': `
                 <div class="form-group">
                     <label>URL to Check</label>
-                    <input type="text" id="action-url" class="form-control" placeholder="http://localhost:3000" value="${existingAction?.url || ''}">
+                    <input type="text" id="action-url" class="form-control" placeholder="http://localhost:3000" value="${this.attrValue(existingAction?.url)}">
                 </div>
             `,
             'ping': `
                 <div class="form-group">
                     <label>Host</label>
-                    <input type="text" id="action-host" class="form-control" placeholder="8.8.8.8 or google.com" value="${existingAction?.host || '8.8.8.8'}">
+                    <input type="text" id="action-host" class="form-control" placeholder="8.8.8.8 or google.com" value="${this.attrValue(existingAction?.host || '8.8.8.8')}">
                 </div>
             `,
             'docker_command': `
@@ -488,7 +743,7 @@ class StudioUI {
                 </div>
                 <div class="form-group">
                     <label>Container Name</label>
-                    <input type="text" id="action-container" class="form-control" placeholder="container-name" value="${existingAction?.container || ''}">
+                    <input type="text" id="action-container" class="form-control" placeholder="container-name" value="${this.attrValue(existingAction?.container)}">
                 </div>
             `,
             'widget': `
@@ -518,19 +773,27 @@ class StudioUI {
 
     setupObsConfig(existingAction = null) {
         const operationSelect = document.getElementById('action-obs-operation');
+        const testButton = document.getElementById('btn-obs-test');
         if (!operationSelect) return;
 
-        // Restore previously saved operation when editing an existing button
         if (existingAction?.operation) {
             operationSelect.value = existingAction.operation;
         }
 
-        operationSelect.addEventListener('change', () => this.updateObsFieldVisibility());
-        this.updateObsFieldVisibility();
+        if (this.obsHandlers.operationChange) {
+            operationSelect.removeEventListener('change', this.obsHandlers.operationChange);
+        }
+        if (this.obsHandlers.testClick && testButton) {
+            testButton.removeEventListener('click', this.obsHandlers.testClick);
+        }
 
-        document.getElementById('btn-obs-test')?.addEventListener('click', () => {
-            this.testObsConnection();
-        });
+        this.obsHandlers.operationChange = () => this.updateObsFieldVisibility();
+        this.obsHandlers.testClick = () => this.testObsConnection();
+
+        operationSelect.addEventListener('change', this.obsHandlers.operationChange);
+        testButton?.addEventListener('click', this.obsHandlers.testClick);
+
+        this.updateObsFieldVisibility();
     }
 
     updateObsFieldVisibility() {
@@ -613,7 +876,11 @@ class StudioUI {
             this.liveKeys.unregisterWidget(this.selectedButton.index);
         }
 
-        this.showToast('Changes applied');
+        this.updateButtonPreview();
+        if (this.profiles) {
+            this.profiles.saveCurrentProfile();
+        }
+        this.showToast('Changes applied & synced');
     }
 
     buildActionFromInputs(actionType) {

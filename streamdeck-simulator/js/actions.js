@@ -23,7 +23,12 @@ class ActionsEngine {
             'navigate': this.navigate.bind(this),
             'docker_command': this.dockerCommand.bind(this),
             'obs_control': this.obsControl.bind(this),
-            'custom_script': this.customScript.bind(this)
+            'custom_script': this.customScript.bind(this),
+            'custom': async (action, button) => {
+                if (typeof action.handler === 'function') {
+                    return action.handler(action, button);
+                }
+            }
         };
 
         this.checkServerAvailability();
@@ -341,6 +346,10 @@ class ActionsEngine {
         if (this.actionHistory.length > 100) {
             this.actionHistory.shift();
         }
+
+        this.dispatchEvent('historyUpdated', {
+            entry: this.actionHistory[this.actionHistory.length - 1]
+        });
     }
 
     getHistory(limit = 50) {

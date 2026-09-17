@@ -20,7 +20,7 @@ class StreamDeck:
         self.grid_rows = grid_rows
         self.buttons = []
         self.last_sync = 0
-        self.sync_interval = 5000  # 5 seconds
+        self.sync_interval = 1000  # 1 second (near real-time)
         self.profile_name = "Default"
 
         # Calculate button dimensions

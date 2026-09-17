@@ -69,6 +69,12 @@
     color: var(--ink);
 }
 
+.footer-status-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .status-pill {
     padding: 6px 10px;
     border-radius: 999px;
@@ -549,6 +555,189 @@ textarea.form-control {
     border-top: 1px solid var(--line);
 }
 
+.preset-section {
+    padding: 12px 12px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.preset-templates-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding-bottom: 12px;
+}
+
+.preset-template-btn {
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.preset-template-btn:hover {
+    background: rgba(79, 140, 255, 0.12);
+    border-color: rgba(79, 140, 255, 0.35);
+}
+
+.icon-picker {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.icon-preset-btn {
+    width: 100%;
+    aspect-ratio: 1;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 16px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.icon-preset-btn:hover {
+    background: rgba(79, 140, 255, 0.15);
+    border-color: rgba(79, 140, 255, 0.4);
+}
+
+.button-preview {
+    margin-bottom: 14px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.button-preview-face {
+    width: 88px;
+    height: 88px;
+    margin: 0 auto 8px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.button-preview-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.button-preview-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-align: center;
+    padding: 0 6px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.button-preview-note {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.4;
+}
+
+.action-history-panel {
+    position: fixed;
+    right: 16px;
+    bottom: 56px;
+    width: 300px;
+    max-height: 36vh;
+    background: rgba(16, 19, 26, 0.88);
+    backdrop-filter: blur(22px);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    display: none;
+    flex-direction: column;
+    z-index: 1002;
+}
+
+body.studio-open .action-history-panel {
+    display: flex;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--line);
+}
+
+.history-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.action-history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 12px 12px;
+}
+
+.history-empty {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+}
+
+.history-item {
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    margin-bottom: 6px;
+}
+
+.history-item.is-success {
+    border-color: rgba(62, 224, 160, 0.25);
+}
+
+.history-item.is-error {
+    border-color: rgba(255, 93, 108, 0.25);
+}
+
+.history-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.history-time {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.history-meta {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.history-error {
+    display: block;
+    color: var(--danger);
+    margin-top: 2px;
+}
+
 .inspector-content::-webkit-scrollbar,
 .profiles-list::-webkit-scrollbar {
     width: 8px;
@@ -587,8 +776,13 @@ textarea.form-control {
         align-items: flex-start;
     }
 
+    .footer-status-group {
+        width: 100%;
+    }
+
     .profiles-panel,
-    .inspector-panel {
+    .inspector-panel,
+    .action-history-panel {
         width: calc(100% - 16px);
         height: auto;
         max-height: 42vh;
@@ -601,5 +795,9 @@ textarea.form-control {
 
     .inspector-panel.open {
         right: 8px;
+    }
+
+    .icon-picker {
+        grid-template-columns: repeat(8, 1fr);
     }
 }

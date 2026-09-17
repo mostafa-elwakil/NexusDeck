@@ -171,6 +171,10 @@ def simulator_css(asset_path):
 def simulator_javascript(asset_path):
     return send_from_directory(os.path.join(SIMULATOR_DIR, 'js'), asset_path)
 
+@app.route('/presets/<path:asset_path>', methods=['GET'])
+def simulator_presets(asset_path):
+    return send_from_directory(os.path.join(SIMULATOR_DIR, 'presets'), asset_path)
+
 # ===== Security Configuration =====
 # Rate limiting
 rate_limit_store = defaultdict(list)
@@ -955,11 +959,63 @@ def _persist_profile(profile):
 
 current_profile = _load_persisted_profile()
 
+# ESP32 device sync tracking (updated when hardware polls /api/get-profile)
+esp32_device_state = {
+    'last_sync': None,
+    'profile_name': None,
+    'button_count': 0,
+}
+
+
+def _record_esp32_sync(profile):
+    """Track the last time the ESP32 hardware pulled the active profile."""
+    esp32_device_state['last_sync'] = datetime.now().isoformat()
+    esp32_device_state['profile_name'] = profile.get('name')
+    esp32_device_state['button_count'] = len(profile.get('buttons') or [])
+
+
 @app.route('/api/get-profile', methods=['GET'])
 def get_profile():
     """Get current profile for ESP32 synchronization"""
     log_request('GET /api/get-profile')
+
+    client = (request.headers.get('X-StreamDeck-Client') or '').strip().lower()
+    if client == 'esp32':
+        _record_esp32_sync(current_profile)
+
     return jsonify(current_profile)
+
+
+@app.route('/api/device-status', methods=['GET'])
+@rate_limit
+def device_status():
+    """Report companion + ESP32 hardware sync status for the web UI."""
+    log_request('GET /api/device-status')
+
+    last_sync = esp32_device_state.get('last_sync')
+    seconds_ago = None
+    connected = False
+
+    if last_sync:
+        try:
+            sync_time = datetime.fromisoformat(last_sync)
+            seconds_ago = round((datetime.now() - sync_time).total_seconds(), 1)
+            connected = seconds_ago <= 20
+        except ValueError:
+            seconds_ago = None
+
+    return jsonify({
+        'success': True,
+        'esp32': {
+            'connected': connected,
+            'last_sync': last_sync,
+            'seconds_ago': seconds_ago,
+            'profile_name': esp32_device_state.get('profile_name'),
+            'button_count': esp32_device_state.get('button_count', 0),
+        },
+        'profile_name': current_profile.get('name'),
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/api/set-profile', methods=['POST'])
 def set_profile():

@@ -175,7 +175,8 @@
                     await this.actions.checkServerAvailability();
 
                     if (this.actions.serverAvailable) {
-                        this.showNotification('Server Connected', 'Companion server is available');
+                        console.log('Companion server is available');
+                        this.studio?.pollDeviceStatus();
                     } else {
                         console.log('Companion server not available - running in standalone mode');
                     }
