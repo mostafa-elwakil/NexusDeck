@@ -432,6 +432,36 @@ void executeButtonAction(uint8_t index) {
         }
     }
 
+    if (btn.actionType == "switch_profile") {
+        Serial.println("Switching profile via ESP32...");
+        setButtonState(index, 2);
+        drawButton(index);
+
+        String url = String(SERVER_URL) + "/api/execute-action";
+        DynamicJsonDocument doc(512);
+        doc["actionType"] = "switch_profile";
+        doc["actionData"] = btn.actionData; // Use the specific action data
+        String jsonPayload;
+        serializeJson(doc, jsonPayload);
+
+        http.begin(url);
+        http.addHeader("Content-Type", "application/json");
+        int httpCode = http.POST(jsonPayload);
+        http.end();
+
+        if (httpCode == 200) {
+            Serial.println("Profile switched successfully! Syncing new profile...");
+            setButtonState(index, 3);
+            drawButton(index);
+            syncProfile();
+        } else {
+            setButtonState(index, 4);
+            drawButton(index);
+        }
+        scheduleButtonReset(index, 600);
+        return;
+    }
+
     if (btn.hasWidget || btn.actionType == "widget" || btn.actionType == "custom" ||
         btn.actionType == "navigate" || btn.actionType == "macro") {
         Serial.println("Widget/Custom action triggered on ESP32");
@@ -721,6 +751,17 @@ String displayIcon(const String& icon) {
     if (icon == "🚫") return "OFF";
     if (icon == "⏺️") return "REC";
     if (icon == "⏯️") return "TOG";
+    if (icon == "📧") return "MAIL";
+    if (icon == "📅") return "CAL";
+    if (icon == "📄") return "DOC";
+    if (icon == "👥") return "TEAM";
+    if (icon == "📸") return "SNAP";
+    if (icon == "🔢") return "NUM";
+    if (icon == "⚙️") return "SET";
+    if (icon == "🎵") return "MUSIC";
+    if (icon == "📺") return "TV";
+    if (icon == "📝") return "NOTE";
+    if (icon.length() > 6) return icon.substring(0, 6);
     return icon;
 }
 

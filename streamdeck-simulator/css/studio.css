@@ -212,23 +212,17 @@ body.theme-light .inspector-content h4 {
     font-weight: 500;
 }
 
-.toolbar-select {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 8px 10px;
-    color: var(--ink);
-    font-size: 13px;
-    cursor: pointer;
+.toolbar-select,
+.inspector-content select {
+    background: #1a1a2e; /* Dark background */
+    color: #ffffff; /* White text */
+    border: 1px solid #444; /* Darker border */
 }
 
-.toolbar-select:hover {
-    background: rgba(255, 255, 255, 0.08);
-}
-
-.toolbar-select:focus {
-    outline: none;
-    border-color: rgba(79, 140, 255, 0.55);
+/* Ensure dropdown options are also readable */
+select option {
+    background: #1a1a2e;
+    color: #ffffff;
 }
 
 .toolbar-section label {

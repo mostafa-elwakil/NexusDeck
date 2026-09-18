@@ -94,13 +94,8 @@ class StudioUI {
                 </button>
             </div>
             <div class="toolbar-section">
-                <label for="select-deck-size">Size</label>
-                <select id="select-deck-size" class="toolbar-select">
-                    <option value="mini">Mini 3×2</option>
-                    <option value="cyd" selected>CYD 4×3</option>
-                    <option value="classic">Classic 5×3</option>
-                    <option value="xl">XL 8×4</option>
-                </select>
+                <label>Size</label>
+                <span class="toolbar-select">4×3</span>
             </div>
             <div class="toolbar-section">
                 <button id="btn-export-profile" class="toolbar-btn" title="Export Profile">
@@ -181,6 +176,7 @@ class StudioUI {
                             <option value="http_check">HTTP Health Check</option>
                             <option value="ping">Ping Host</option>
                             <option value="docker_command">Docker Command</option>
+                            <option value="switch_profile">Switch Profile (Cycle)</option>
                             <option value="widget">Live Widget</option>
                         </select>
                     </div>
@@ -209,10 +205,6 @@ class StudioUI {
                 <h3>Profiles</h3>
             </div>
             <div class="panel-content">
-                <div class="preset-section">
-                    <p class="panel-kicker">Quick templates</p>
-                    <div id="preset-templates-list" class="preset-templates-list"></div>
-                </div>
                 <div id="profiles-list" class="profiles-list">
                     <!-- Profiles will be populated here -->
                 </div>
@@ -253,10 +245,7 @@ class StudioUI {
             this.applyTheme(this.theme === 'dark' ? 'light' : 'dark');
         });
 
-        // Deck size change
-        document.getElementById('select-deck-size')?.addEventListener('change', (e) => {
-            this.deck.resize(e.target.value);
-        });
+// Removed: Deck size change listener
 
         // Save profile
         document.getElementById('btn-save-profile')?.addEventListener('click', () => {
@@ -454,6 +443,12 @@ class StudioUI {
             if (!response.ok) return;
             const data = await response.json();
             this.updateEsp32Status(data.esp32 || null);
+
+            // Auto-sync profile if changed on server/ESP32
+            if (data.profile_name && data.profile_name !== this.profiles.currentProfile?.name) {
+                console.log('Profile change detected, syncing...');
+                this.profiles.loadProfile(data.profile_name);
+            }
         } catch (error) {
             this.updateEsp32Status(null);
         }
@@ -759,6 +754,13 @@ class StudioUI {
                         <option value="uptime">Uptime</option>
                     </select>
                 </div>
+            `,
+            'switch_profile': `
+                <div class="form-group">
+                    <label>Target Profile Name (Optional)</label>
+                    <input type="text" id="action-profile-name" class="form-control" placeholder="Leave empty to cycle" value="${this.attrValue(existingAction?.name)}">
+                </div>
+                <p class="text-muted" style="font-size: 12px; color: #888;">If empty, it cycles through all profiles.</p>
             `
         };
 
@@ -917,7 +919,8 @@ class StudioUI {
                 type: 'docker_command',
                 dockerAction: document.getElementById('action-docker-action').value,
                 container: document.getElementById('action-container').value
-            })
+            }),
+            'switch_profile': () => ({ type: 'switch_profile', name: document.getElementById('action-profile-name').value })
         };
 
         return actions[actionType] ? actions[actionType]() : null;

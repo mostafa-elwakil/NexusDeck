@@ -24,6 +24,7 @@ class ActionsEngine {
             'docker_command': this.dockerCommand.bind(this),
             'obs_control': this.obsControl.bind(this),
             'custom_script': this.customScript.bind(this),
+            'switch_profile': this.switchProfile.bind(this),
             'custom': async (action, button) => {
                 if (typeof action.handler === 'function') {
                     return action.handler(action, button);
@@ -350,6 +351,30 @@ class ActionsEngine {
         this.dispatchEvent('historyUpdated', {
             entry: this.actionHistory[this.actionHistory.length - 1]
         });
+    }
+
+    async switchProfile(action, button) {
+        const response = await fetch(`${this.serverUrl}/api/execute-action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                actionType: 'switch_profile',
+                actionData: JSON.stringify(action)
+            })
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to switch profile');
+        }
+
+        const profileRes = await fetch(`${this.serverUrl}/api/get-profile`);
+        const profile = await profileRes.json();
+        if (profile && window.streamDeckApp?.profiles) {
+            window.streamDeckApp.profiles.loadProfile(profile);
+        }
+
+        this.showNotification('Profile Switched', profile.name || 'Switched profile');
     }
 
     getHistory(limit = 50) {

@@ -1039,6 +1039,12 @@ def set_profile():
         'message': 'Profile updated'
     })
 
+@app.route('/api/profiles', methods=['GET'])
+def list_profiles():
+    presets_dir = os.path.join(SIMULATOR_DIR, 'presets')
+    preset_files = sorted([f.replace('.json', '') for f in os.listdir(presets_dir) if f.endswith('.json')]) if os.path.exists(presets_dir) else []
+    return jsonify({'profiles': preset_files})
+
 @app.route('/api/execute-action', methods=['POST'])
 @rate_limit
 def execute_action():
@@ -1125,6 +1131,57 @@ def execute_action():
                 'status': status,
                 'error': None if success else message
             }), (200 if success else 400)
+
+        elif action_type == 'switch_profile':
+            global current_profile
+            # Check if specific profile name was requested in actionData
+            target_name = action_config.get('name', '').strip().lower()
+            
+            presets_dir = os.path.join(SIMULATOR_DIR, 'presets')
+            print(f"DEBUG: presets_dir={presets_dir}")
+            preset_files = sorted([f for f in os.listdir(presets_dir) if f.endswith('.json')]) if os.path.exists(presets_dir) else []
+            print(f"DEBUG: preset_files={preset_files}")
+            
+            all_profiles = []
+            for pf in preset_files:
+                pf_path = os.path.join(presets_dir, pf)
+                try:
+                    with open(pf_path, 'r', encoding='utf-8') as f:
+                        pdata = json.load(f)
+                        all_profiles.append(pdata)
+                except Exception as e:
+                    print(f"DEBUG: Error loading {pf}: {e}")
+                    pass
+            
+            # Ensure current_profile is always in the list
+            if not any(p.get('name') == current_profile.get('name') for p in all_profiles):
+                all_profiles.insert(0, current_profile)
+                
+            new_profile = None
+            if target_name:
+                # Try to find specific profile
+                for p in all_profiles:
+                    if p.get('name', '').lower() == target_name:
+                        new_profile = p
+                        break
+                if not new_profile:
+                    print(f"DEBUG: Profile '{target_name}' not found")
+            
+            if not new_profile:
+                # Cycle to next
+                current_name = current_profile.get('name', '')
+                curr_idx = 0
+                for idx, p in enumerate(all_profiles):
+                    if p.get('name', '') == current_name:
+                        curr_idx = idx
+                        break
+                next_idx = (curr_idx + 1) % len(all_profiles) if all_profiles else 0
+                new_profile = all_profiles[next_idx] if all_profiles else current_profile
+                print(f"DEBUG: Cycling to next profile: {new_profile.get('name')}")
+            
+            current_profile = new_profile
+            _persist_profile(current_profile)
+            return jsonify({'success': True, 'message': f'Switched to profile: {current_profile.get("name")}'})
 
         elif action_type == 'docker_command':
             success, message, output = execute_docker_command(
