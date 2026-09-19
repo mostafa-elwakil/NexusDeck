@@ -18,9 +18,29 @@
 #include <ArduinoJson.h>
 #include <XPT2046_Touchscreen.h>
 #include <SPI.h>
+#include <Preferences.h>
+#include <WiFiManager.h>
 #include "config.h"
+#undef SERVER_URL
+#define SERVER_URL serverIP.c_str()
 
-// ===== Configuration =====
+// ===== Configuration & Settings =====
+Preferences preferences;
+String serverIP = "";
+
+void loadSettings() {
+    preferences.begin("deck", false);
+    serverIP = preferences.getString("srv_ip", "");
+    preferences.end();
+}
+
+void saveIP(String ip) {
+    preferences.begin("deck", false);
+    preferences.putString("srv_ip", ip);
+    preferences.end();
+    serverIP = ip;
+}
+
 #define TOUCH_CS 33
 #define TOUCH_IRQ 36
 #define TOUCH_SCLK 25
@@ -124,13 +144,16 @@ void setup() {
     Serial.println("StreamDeck ESP32-2432S028 Firmware");
     Serial.println("=================================\n");
 
-    // Initialize display
+    // Initialize display FIRST
     setupDisplay();
 
     // Initialize touch
     setupTouch();
 
-    // Initialize WiFi
+    // Load saved server IP
+    loadSettings();
+
+    // Connect to WiFi or launch StreamDeck-Setup portal
     setupWiFi();
 
     // Initialize buttons with defaults
@@ -158,6 +181,26 @@ void setup() {
 
 // ===== Main Loop =====
 void loop() {
+    // Hold top area/status bar for 2.5s to trigger StreamDeck-Setup portal anytime
+    if (touch.touched()) {
+        TS_Point p = touch.getPoint();
+        if (p.y < 800) {
+            static unsigned long holdStart = 0;
+            if (holdStart == 0) holdStart = millis();
+            if (millis() - holdStart > 2500) {
+                tft.fillScreen(TFT_BLACK);
+                tft.setTextDatum(MC_DATUM);
+                tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+                tft.drawString("Resetting Setup...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 4);
+                saveIP("");
+                WiFiManager wm;
+                wm.resetSettings();
+                delay(1000);
+                ESP.restart();
+            }
+        }
+    }
+
     unsigned long currentTime = millis();
 
     processButtonResets();
@@ -226,42 +269,76 @@ void setupTouch() {
 
 // ===== WiFi Setup =====
 void setupWiFi() {
-    Serial.print("Connecting to WiFi: ");
-    Serial.println(WIFI_SSID);
+    WiFiManager wm;
+    wm.setConfigPortalTimeout(180);
+
+    WiFiManagerParameter custom_server_ip("server_ip", "Server URL (e.g. http://192.168.1.5:8765)", serverIP.c_str(), 60);
+    wm.addParameter(&custom_server_ip);
+
+    bool needPortal = (serverIP.length() == 0 || !serverIP.startsWith("http"));
+
+    if (needPortal) {
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+        tft.drawString("WiFi Setup Needed", SCREEN_WIDTH / 2, 35, 4);
+
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawString("1. Connect Phone/PC to WiFi:", SCREEN_WIDTH / 2, 75, 2);
+
+        tft.setTextColor(TFT_CYAN, TFT_BLACK);
+        tft.drawString("StreamDeck-Setup", SCREEN_WIDTH / 2, 105, 4);
+
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawString("Password: password123", SCREEN_WIDTH / 2, 135, 2);
+        tft.drawString("2. Set WiFi & Server IP in browser", SCREEN_WIDTH / 2, 165, 2);
+
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.drawString("Open: 192.168.4.1", SCREEN_WIDTH / 2, 195, 2);
+
+        Serial.println("Starting config portal: StreamDeck-Setup");
+        if (!wm.startConfigPortal("StreamDeck-Setup", "password123")) {
+            Serial.println("Portal timeout, restarting...");
+            delay(1000);
+            ESP.restart();
+        }
+    } else {
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.drawString("Connecting to WiFi...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 2);
+
+        if (!wm.autoConnect("StreamDeck-Setup", "password123")) {
+            Serial.println("WiFi connection failed, restarting...");
+            delay(1000);
+            ESP.restart();
+        }
+    }
+
+    String newIP = custom_server_ip.getValue();
+    newIP.trim();
+    if (newIP.length() > 0) {
+        if (!newIP.startsWith("http://") && !newIP.startsWith("https://")) {
+            newIP = "http://" + newIP;
+        }
+        if (newIP.indexOf(':', 7) == -1) {
+            newIP += ":8765";
+        }
+        saveIP(newIP);
+    }
+
+    wifiConnected = (WiFi.status() == WL_CONNECTED);
 
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("Connecting to WiFi...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 2);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.drawString("WiFi Connected!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20, 4);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("Server: " + serverIP, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 20, 2);
+    delay(1500);
 
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        wifiConnected = true;
-        Serial.println("\nWiFi connected!");
-        Serial.print("IP Address: ");
-        Serial.println(WiFi.localIP());
-
-        tft.fillScreen(TFT_BLACK);
-        tft.drawString("WiFi Connected!", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 2);
-        tft.drawString(WiFi.localIP().toString(), SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
-        delay(2000);
-    } else {
-        wifiConnected = false;
-        Serial.println("\nWiFi connection failed!");
-        Serial.println("Running in offline mode...");
-
-        tft.fillScreen(TFT_BLACK);
-        tft.drawString("WiFi Failed", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 2);
-        tft.drawString("Offline Mode", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
-        delay(2000);
-    }
+    Serial.println("WiFi connected!");
+    Serial.println("Server URL: " + serverIP);
 }
 
 // ===== Draw Single Button =====
@@ -365,7 +442,6 @@ void handleTouch() {
     }
 }
 
-// ===== Get Touched Button =====
 int8_t getTouchedButton(uint16_t x, uint16_t y) {
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         uint8_t col = i % GRID_COLS;
@@ -538,6 +614,13 @@ void syncProfile() {
         httpCode = http.GET();
 
         if (httpCode == 200) {
+            String newServerIP = http.header("X-Server-IP");
+            if (newServerIP.length() > 0 && newServerIP != serverIP) {
+                Serial.println("Server IP changed! Updating...");
+                saveIP("http://" + newServerIP + ":8765");
+                ESP.restart();
+            }
+            
             String payload = http.getString();
 
             DynamicJsonDocument doc(12288);
@@ -864,3 +947,4 @@ void drawStatusBar() {
         tft.drawString(stats, SCREEN_WIDTH - 4, STATUS_BAR_HEIGHT / 2 + 1, 1);
     }
 }
+

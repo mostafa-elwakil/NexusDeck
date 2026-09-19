@@ -19,6 +19,7 @@ import re
 import sys
 import time
 import threading
+import socket  # إضافة المكتبة هنا
 
 app = Flask(__name__)
 # CORS enabled with restrictions for security
@@ -983,7 +984,15 @@ def get_profile():
     if client == 'esp32':
         _record_esp32_sync(current_profile)
 
-    return jsonify(current_profile)
+    # جلب الـ IP الخاص بالجهاز
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+
+    response = jsonify(current_profile)
+    # إضافة الـ IP في الـ Header أو إرساله كجزء من البروفايل
+    response.headers['X-Server-IP'] = local_ip
+    return response
+
 
 
 @app.route('/api/device-status', methods=['GET'])
@@ -1039,11 +1048,15 @@ def set_profile():
         'message': 'Profile updated'
     })
 
-@app.route('/api/profiles', methods=['GET'])
-def list_profiles():
-    presets_dir = os.path.join(SIMULATOR_DIR, 'presets')
-    preset_files = sorted([f.replace('.json', '') for f in os.listdir(presets_dir) if f.endswith('.json')]) if os.path.exists(presets_dir) else []
-    return jsonify({'profiles': preset_files})
+@app.route('/api/set-esp-ip', methods=['POST'])
+def set_esp_ip():
+    data = request.json
+    esp_ip = data.get('ip')
+    # حفظ الـ IP في ملف مؤقت أو في الذاكرة
+    with open('esp_ip.txt', 'w') as f:
+        f.write(esp_ip)
+    return jsonify({'success': True})
+
 
 @app.route('/api/execute-action', methods=['POST'])
 @rate_limit
