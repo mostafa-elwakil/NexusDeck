@@ -1,8 +1,8 @@
 {
   "name": "Media Control",
-  "size": "mini",
-  "rows": 2,
-  "cols": 3,
+  "size": "cyd",
+  "rows": 3,
+  "cols": 4,
   "buttons": [
     {
       "label": "Spotify",
@@ -78,6 +78,41 @@
         "config": {
           "duration": 300
         }
+      }
+    },
+    {
+      "label": "Browser",
+      "icon": "🌐",
+      "color": "#4285f4",
+      "action": {
+        "type": "open_url",
+        "url": "https://google.com"
+      }
+    },
+    {
+      "label": "Discord",
+      "icon": "💬",
+      "color": "#7289da",
+      "action": {
+        "type": "open_app",
+        "app": "Discord.exe"
+      }
+    },
+    {
+      "label": "Notepad",
+      "icon": "📝",
+      "color": "#333333",
+      "action": {
+        "type": "open_app",
+        "app": "notepad.exe"
+      }
+    },
+    {
+      "label": "Switch Profile",
+      "icon": "🔄",
+      "color": "#5cb5f0",
+      "action": {
+        "type": "switch_profile"
       }
     }
   ]

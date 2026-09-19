@@ -76,10 +76,6 @@ class StudioUI {
                 </div>
             </div>
             <div class="toolbar-section">
-                <button id="btn-settings" class="toolbar-btn" title="Settings">
-                    <span class="icon">⚙️</span>
-                    <span class="label">Settings</span>
-                </button>
                 <button id="btn-toggle-mode" class="toolbar-btn" title="Toggle Studio Mode">
                     <span class="icon">✎</span>
                     <span class="label">Studio</span>
@@ -240,24 +236,6 @@ class StudioUI {
     }
 
     attachEventListeners() {
-        // Settings panel
-        document.getElementById('btn-settings')?.addEventListener('click', async () => {
-            const espIp = prompt("Enter ESP32 IP Address:", localStorage.getItem('esp32_ip') || "192.168.1.x");
-            if (espIp) {
-                localStorage.setItem('esp32_ip', espIp);
-                try {
-                    await fetch(`${this.actions.serverUrl}/api/set-esp-ip`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ip: espIp })
-                    });
-                    this.showToast('ESP32 IP updated on server');
-                } catch (e) {
-                    alert("Failed to update ESP32 IP on server");
-                }
-            }
-        });
-
         // Toggle mode
         document.getElementById('btn-toggle-mode')?.addEventListener('click', () => {
             this.toggleMode();

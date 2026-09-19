@@ -18,15 +18,25 @@ class ProfilesManager {
 
     loadProfiles() {
         try {
+            const defaults = this.getDefaultProfiles();
             const stored = localStorage.getItem(this.storageKey);
             if (stored) {
-                this.profiles = JSON.parse(stored);
-                this.migrateCpuRamWidgets();
+                const parsed = JSON.parse(stored);
+                this.profiles = defaults.map(def => {
+                    const existing = parsed.find(p => p.name === def.name);
+                    return existing ? { ...existing, size: 'cyd', rows: 3, cols: 4 } : def;
+                });
+                parsed.forEach(p => {
+                    if (!defaults.some(d => d.name === p.name)) {
+                        this.profiles.push(p);
+                    }
+                });
+                this.saveProfiles();
             } else {
-                // Load default profiles
-                this.profiles = this.getDefaultProfiles();
+                this.profiles = defaults;
                 this.saveProfiles();
             }
+            this.migrateCpuRamWidgets();
 
             // Load last active profile
             const currentProfileName = localStorage.getItem(this.currentProfileKey);
@@ -375,19 +385,24 @@ class ProfilesManager {
             },
             {
                 name: 'Media Control',
-                size: 'mini',
-                rows: 2,
-                cols: 3,
+                size: 'cyd',
+                rows: 3,
+                cols: 4,
                 buttons: [
                     { label: 'Spotify', icon: '🎵', color: '#1db954', action: { type: 'open_url', url: 'https://open.spotify.com' } },
                     { label: 'YouTube', icon: '📺', color: '#ff0000', action: { type: 'open_url', url: 'https://youtube.com' } },
-                    { label: 'OBS', icon: '🎥', color: '#302e31', action: { type: 'open_app', app: 'obs64.exe' } },
+                    { label: 'VLC', icon: '🎥', color: '#ff8800', action: { type: 'open_app', app: 'vlc.exe' } },
                     { label: 'Rec Toggle', icon: '⏺️', color: '#ea4335', action: { type: 'obs_control', operation: 'toggle_recording' } },
-                    { label: 'Scene: Game', icon: '🎮', color: '#2496ed', action: { type: 'obs_control', operation: 'set_scene', scene: 'Game' } },
 
+                    { label: 'Scene: Game', icon: '🎮', color: '#2496ed', action: { type: 'obs_control', operation: 'set_scene', scene: 'Game' } },
                     { label: '', icon: '🕐', color: '#1a1a3e', widget: { type: 'clock' } },
-                    { label: 'Stopwatch', icon: '⏱️', color: '#1a2e3e', widget: { type: 'stopwatch' } },
-                    { label: 'Timer 5m', icon: '⏲️', color: '#2d2d6f', widget: { type: 'timer', config: { duration: 300 } } }
+                    { label: '', icon: '⏱️', color: '#1a2e3e', widget: { type: 'stopwatch' } },
+                    { label: '', icon: '⏲️', color: '#2d2d6f', widget: { type: 'timer', config: { duration: 300 } } },
+
+                    { label: 'Browser', icon: '🌐', color: '#4285f4', action: { type: 'open_url', url: 'https://google.com' } },
+                    { label: 'Discord', icon: '💬', color: '#7289da', action: { type: 'open_app', app: 'Discord.exe' } },
+                    { label: 'Notepad', icon: '📝', color: '#333333', action: { type: 'open_app', app: 'notepad.exe' } },
+                    { label: 'Switch Profile', icon: '🔄', color: '#5cb5f0', action: { type: 'switch_profile' } }
                 ]
             },
             {
@@ -414,27 +429,24 @@ class ProfilesManager {
             },
             {
                 name: 'Productivity',
-                size: 'classic',
+                size: 'cyd',
                 rows: 3,
-                cols: 5,
+                cols: 4,
                 buttons: [
                     { label: 'Gmail', icon: '📧', color: '#ea4335', action: { type: 'open_url', url: 'https://mail.google.com' } },
                     { label: 'Calendar', icon: '📅', color: '#4285f4', action: { type: 'open_url', url: 'https://calendar.google.com' } },
                     { label: 'Notion', icon: '📝', color: '#000000', action: { type: 'open_url', url: 'https://notion.so' } },
                     { label: 'Slack', icon: '💬', color: '#4a154b', action: { type: 'open_url', url: 'https://slack.com' } },
-                    { label: '', icon: '🕐', color: '#1a1a3e', widget: { type: 'clock' } },
 
                     { label: 'Chrome', icon: '🌐', color: '#4285f4', action: { type: 'open_app', app: 'chrome.exe' } },
                     { label: 'Excel', icon: '📊', color: '#217346', action: { type: 'open_app', app: 'excel.exe' } },
                     { label: 'Word', icon: '📄', color: '#2b579a', action: { type: 'open_app', app: 'winword.exe' } },
                     { label: 'Teams', icon: '👥', color: '#6264a7', action: { type: 'open_app', app: 'teams.exe' } },
-                    { label: '', icon: '📊', color: '#1a2e3e', widget: { type: 'cpu_ram' } },
 
                     { label: 'Screenshot', icon: '📸', color: '#1a1a2e', action: { type: 'run_command', command: 'snippingtool', shell: 'cmd' } },
                     { label: 'Calculator', icon: '🔢', color: '#2d2d5f', action: { type: 'open_app', app: 'calc.exe' } },
                     { label: 'Notepad', icon: '📝', color: '#1a2e1a', action: { type: 'open_app', app: 'notepad.exe' } },
-                    { label: 'Task Mgr', icon: '⚙️', color: '#3e1a1a', action: { type: 'open_app', app: 'taskmgr.exe' } },
-                    { label: 'Date', icon: '📅', color: '#1a3e2e', widget: { type: 'date' } }
+                    { label: 'Switch Profile', icon: '🔄', color: '#5cb5f0', action: { type: 'switch_profile' } }
                 ]
             }
         ];

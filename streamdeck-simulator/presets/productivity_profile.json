@@ -1,8 +1,8 @@
 {
   "name": "Productivity Suite",
-  "size": "classic",
+  "size": "cyd",
   "rows": 3,
-  "cols": 5,
+  "cols": 4,
   "buttons": [
     {
       "label": "Gmail",
@@ -38,15 +38,6 @@
       "action": {
         "type": "open_url",
         "url": "https://slack.com"
-      }
-    },
-    {
-      "label": "",
-      "icon": "🕐",
-      "color": "#1a1a3e",
-      "action": null,
-      "widget": {
-        "type": "clock"
       }
     },
     {
@@ -86,15 +77,6 @@
       }
     },
     {
-      "label": "",
-      "icon": "📊",
-      "color": "#1a2e3e",
-      "action": null,
-      "widget": {
-        "type": "cpu_ram"
-      }
-    },
-    {
       "label": "Screenshot",
       "icon": "📸",
       "color": "#1a1a2e",
@@ -114,30 +96,20 @@
       }
     },
     {
-      "label": "Notepad",
-      "icon": "📝",
-      "color": "#1a2e1a",
-      "action": {
-        "type": "open_app",
-        "app": "notepad.exe"
-      }
-    },
-    {
-      "label": "Task Manager",
-      "icon": "⚙️",
-      "color": "#3e1a1a",
-      "action": {
-        "type": "open_app",
-        "app": "taskmgr.exe"
-      }
-    },
-    {
       "label": "",
-      "icon": "📅",
-      "color": "#1a3e2e",
+      "icon": "🕐",
+      "color": "#1a1a3e",
       "action": null,
       "widget": {
-        "type": "date"
+        "type": "clock"
+      }
+    },
+    {
+      "label": "Switch Profile",
+      "icon": "🔄",
+      "color": "#5cb5f0",
+      "action": {
+        "type": "switch_profile"
       }
     }
   ]

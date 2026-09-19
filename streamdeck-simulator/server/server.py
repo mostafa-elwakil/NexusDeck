@@ -912,7 +912,37 @@ def http_proxy():
 
 # Profile persistence: survive server restarts so the ESP32 device keeps
 # its buttons even when the companion server is restarted.
-PROFILE_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'profile_state.json')
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROFILE_STATE_FILE = os.path.join(CURRENT_DIR, 'profile_state.json')
+SETTINGS_DB_FILE = os.path.join(CURRENT_DIR, 'server_settings.json')
+
+
+def _load_server_settings():
+    try:
+        if os.path.exists(SETTINGS_DB_FILE):
+            with open(SETTINGS_DB_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+    except Exception:
+        pass
+    return {
+        "esp32_ip": "",
+        "server_port": 8765,
+        "auto_sync": True,
+        "devices": []
+    }
+
+
+def _persist_server_settings(settings):
+    try:
+        with open(SETTINGS_DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except Exception as error:
+        log_request('ERROR', f'persist settings: {str(error)}')
+
+
+server_settings = _load_server_settings()
 
 
 def _load_persisted_profile():
@@ -983,6 +1013,10 @@ def get_profile():
     client = (request.headers.get('X-StreamDeck-Client') or '').strip().lower()
     if client == 'esp32':
         _record_esp32_sync(current_profile)
+        esp32_ip = request.remote_addr
+        if esp32_ip and server_settings.get('esp32_ip') != esp32_ip:
+            server_settings['esp32_ip'] = esp32_ip
+            _persist_server_settings(server_settings)
 
     # جلب الـ IP الخاص بالجهاز
     hostname = socket.gethostname()
@@ -992,6 +1026,18 @@ def get_profile():
     # إضافة الـ IP في الـ Header أو إرساله كجزء من البروفايل
     response.headers['X-Server-IP'] = local_ip
     return response
+
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def handle_settings():
+    global server_settings
+    log_request(f'{request.method} /api/settings')
+    if request.method == 'POST':
+        data = request.json or {}
+        server_settings.update(data)
+        _persist_server_settings(server_settings)
+        return jsonify({'success': True, 'settings': server_settings})
+    return jsonify({'success': True, 'settings': server_settings})
 
 
 
