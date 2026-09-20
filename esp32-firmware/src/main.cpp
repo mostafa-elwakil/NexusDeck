@@ -155,6 +155,7 @@ uint16_t parseColor(String colorHex);
 void drawStatusBar();
 void updateSystemStats();
 String displayIcon(const String& icon);
+bool drawIconShape(TFT_eSprite& sprite, const String& icon, int cx, int cy, uint16_t fg, uint16_t bg);
 void scheduleButtonReset(uint8_t index, unsigned long delayMs);
 void processButtonResets();
 void updateRunningIndicators();
@@ -518,11 +519,13 @@ void drawButton(uint8_t index) {
     sprite.fillRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 6, bgColor);
     sprite.drawRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 6, borderColor);
 
-    // Draw icon (if exists)
+    // Draw icon as a real shape when known, otherwise as text
     if (btn.icon.length() > 0) {
-        sprite.setTextColor(TFT_WHITE, bgColor);
-        sprite.setTextDatum(MC_DATUM);
-        sprite.drawString(truncateText(displayIcon(btn.icon), 8), BUTTON_WIDTH / 2, BUTTON_HEIGHT / 3, 2);
+        if (!drawIconShape(sprite, btn.icon, BUTTON_WIDTH / 2, BUTTON_HEIGHT / 3, TFT_WHITE, bgColor)) {
+            sprite.setTextColor(TFT_WHITE, bgColor);
+            sprite.setTextDatum(MC_DATUM);
+            sprite.drawString(truncateText(displayIcon(btn.icon), 8), BUTTON_WIDTH / 2, BUTTON_HEIGHT / 3, 2);
+        }
     }
 
     // Draw label
@@ -1115,6 +1118,294 @@ String displayIcon(const String& icon) {
     if (icon == "📝") return "NOTE";
     if (icon.length() > 6) return icon.substring(0, 6);
     return icon;
+}
+
+// ===== Vector Icon Shapes (drawn on screen, not text) =====
+bool drawIconShape(TFT_eSprite& sprite, const String& icon, int cx, int cy, uint16_t fg, uint16_t bg) {
+    // Transport controls
+    if (icon == "PLAY" || icon == "▶" || icon == "▶️") {
+        sprite.fillTriangle(cx - 6, cy - 8, cx - 6, cy + 8, cx + 8, cy, fg);
+        return true;
+    }
+    if (icon == "PAUSE" || icon == "⏸" || icon == "⏸️") {
+        sprite.fillRect(cx - 7, cy - 8, 5, 16, fg);
+        sprite.fillRect(cx + 2, cy - 8, 5, 16, fg);
+        return true;
+    }
+    if (icon == "STOP" || icon == "⏹" || icon == "⏹️") {
+        sprite.fillRect(cx - 7, cy - 7, 14, 14, fg);
+        return true;
+    }
+    if (icon == "⏺️") {
+        sprite.fillCircle(cx, cy, 8, TFT_RED);
+        sprite.drawCircle(cx, cy, 8, fg);
+        return true;
+    }
+    if (icon == "⏯️" || icon == "TOG") {
+        sprite.fillTriangle(cx - 9, cy - 7, cx - 9, cy + 7, cx - 1, cy, fg);
+        sprite.fillRect(cx + 3, cy - 7, 4, 14, fg);
+        return true;
+    }
+    if (icon == "DONE") {
+        for (int o = -1; o <= 1; o++) {
+            sprite.drawLine(cx - 8, cy + o, cx - 2, cy + 6 + o, fg);
+            sprite.drawLine(cx - 2, cy + 6 + o, cx + 8, cy - 6 + o, fg);
+        }
+        return true;
+    }
+    // Clock / timer / stopwatch
+    if (icon == "TIME" || icon == "🕐" || icon == "🕒" || icon == "TMR" || icon == "⏲" || icon == "⏲️") {
+        sprite.drawCircle(cx, cy, 9, fg);
+        sprite.drawLine(cx, cy, cx, cy - 6, fg);
+        sprite.drawLine(cx, cy, cx + 4, cy + 2, fg);
+        sprite.fillCircle(cx, cy, 1, fg);
+        return true;
+    }
+    if (icon == "SW" || icon == "⏱" || icon == "⏱️") {
+        sprite.drawCircle(cx, cy + 1, 8, fg);
+        sprite.fillRect(cx - 2, cy - 12, 4, 3, fg);
+        sprite.drawLine(cx + 5, cy - 6, cx + 8, cy - 9, fg);
+        sprite.drawLine(cx, cy + 1, cx, cy - 4, fg);
+        sprite.drawLine(cx, cy + 1, cx + 3, cy + 3, fg);
+        return true;
+    }
+    // Pomodoro tomato
+    if (icon == "🍅" || icon == "POMO") {
+        sprite.fillCircle(cx, cy + 1, 8, TFT_RED);
+        sprite.fillTriangle(cx - 1, cy - 7, cx + 8, cy - 9, cx + 4, cy - 3, TFT_GREEN);
+        sprite.drawLine(cx + 1, cy - 7, cx + 1, cy - 10, TFT_GREEN);
+        return true;
+    }
+    // Monitor / PC
+    if (icon == "💻" || icon == "🖥️" || icon == "DESK" || icon == "PC") {
+        sprite.drawRect(cx - 10, cy - 8, 20, 12, fg);
+        sprite.fillRect(cx - 1, cy + 4, 2, 4, fg);
+        sprite.drawLine(cx - 6, cy + 8, cx + 6, cy + 8, fg);
+        return true;
+    }
+    // Terminal
+    if (icon == "⚡" || icon == "CMD" || icon == "WSL") {
+        sprite.drawRect(cx - 10, cy - 8, 20, 14, fg);
+        sprite.drawLine(cx - 7, cy - 4, cx - 3, cy + 0, fg);
+        sprite.drawLine(cx - 3, cy + 0, cx - 7, cy + 4, fg);
+        sprite.drawLine(cx - 1, cy + 4, cx + 6, cy + 4, fg);
+        return true;
+    }
+    // Code brackets (VS Code)
+    if (icon == "Code") {
+        sprite.drawLine(cx - 2, cy - 7, cx - 9, cy, fg);
+        sprite.drawLine(cx - 9, cy, cx - 2, cy + 7, fg);
+        sprite.drawLine(cx + 2, cy - 7, cx + 9, cy, fg);
+        sprite.drawLine(cx + 9, cy, cx + 2, cy + 7, fg);
+        sprite.drawLine(cx + 2, cy - 8, cx - 2, cy + 8, fg);
+        return true;
+    }
+    // Docker containers stack
+    if (icon == "🐳" || icon == "DOCKER") {
+        sprite.drawRect(cx - 9, cy - 9, 18, 5, fg);
+        sprite.drawRect(cx - 9, cy - 2, 18, 5, fg);
+        sprite.drawRect(cx - 9, cy + 5, 18, 5, fg);
+        return true;
+    }
+    // Git branch (GitHub)
+    if (icon == "🐙" || icon == "GH") {
+        sprite.drawLine(cx - 5, cy - 6, cx - 5, cy + 6, fg);
+        sprite.fillCircle(cx - 5, cy - 6, 3, fg);
+        sprite.fillCircle(cx - 5, cy + 6, 3, fg);
+        sprite.drawLine(cx - 5, cy + 1, cx + 5, cy - 6, fg);
+        sprite.fillCircle(cx + 5, cy - 6, 3, fg);
+        return true;
+    }
+    // Globe (web)
+    if (icon == "🌐" || icon == "WEB") {
+        sprite.drawCircle(cx, cy, 9, fg);
+        sprite.drawEllipse(cx, cy, 4, 9, fg);
+        sprite.drawLine(cx - 9, cy, cx + 9, cy, fg);
+        return true;
+    }
+    // Ping signal rings
+    if (icon == "📡" || icon == "PING") {
+        sprite.fillCircle(cx, cy + 6, 2, fg);
+        sprite.drawCircle(cx, cy + 6, 5, fg);
+        sprite.drawCircle(cx, cy + 6, 8, fg);
+        return true;
+    }
+    // Bar chart stats
+    if (icon == "📊" || icon == "STAT") {
+        sprite.drawLine(cx - 9, cy + 8, cx + 9, cy + 8, fg);
+        sprite.fillRect(cx - 8, cy + 1, 4, 7, fg);
+        sprite.fillRect(cx - 2, cy - 3, 4, 11, fg);
+        sprite.fillRect(cx + 4, cy - 7, 4, 15, fg);
+        return true;
+    }
+    // List
+    if (icon == "📋" || icon == "LIST") {
+        for (int i = 0; i < 3; i++) {
+            int yy = cy - 6 + i * 6;
+            sprite.fillCircle(cx - 7, yy, 1, fg);
+            sprite.drawLine(cx - 4, yy, cx + 8, yy, fg);
+        }
+        return true;
+    }
+    // Document
+    if (icon == "📄" || icon == "DOC") {
+        sprite.drawRect(cx - 6, cy - 9, 12, 18, fg);
+        sprite.fillTriangle(cx + 6, cy - 9, cx + 6, cy - 4, cx + 1, cy - 9, fg);
+        sprite.drawLine(cx - 3, cy - 2, cx + 3, cy - 2, fg);
+        sprite.drawLine(cx - 3, cy + 2, cx + 3, cy + 2, fg);
+        sprite.drawLine(cx - 3, cy + 6, cx + 1, cy + 6, fg);
+        return true;
+    }
+    // Note pencil
+    if (icon == "📝" || icon == "NOTE") {
+        sprite.drawLine(cx - 6, cy + 6, cx + 3, cy - 3, fg);
+        sprite.drawLine(cx - 5, cy + 7, cx + 4, cy - 2, fg);
+        sprite.fillTriangle(cx + 3, cy - 3, cx + 7, cy - 7, cx + 5, cy - 1, fg);
+        return true;
+    }
+    // Trash
+    if (icon == "🗑️" || icon == "CLEAR") {
+        sprite.fillRect(cx - 8, cy - 7, 16, 3, fg);
+        sprite.fillRect(cx - 2, cy - 10, 4, 3, fg);
+        sprite.fillRect(cx - 6, cy - 4, 12, 13, fg);
+        sprite.drawLine(cx - 2, cy - 1, cx - 2, cy + 6, bg);
+        sprite.drawLine(cx + 2, cy - 1, cx + 2, cy + 6, bg);
+        return true;
+    }
+    // Mail envelope
+    if (icon == "📧" || icon == "MAIL") {
+        sprite.drawRect(cx - 10, cy - 7, 20, 14, fg);
+        sprite.drawLine(cx - 10, cy - 7, cx, cy + 1, fg);
+        sprite.drawLine(cx, cy + 1, cx + 10, cy - 7, fg);
+        return true;
+    }
+    // Calendar
+    if (icon == "📅" || icon == "CAL") {
+        sprite.drawRect(cx - 9, cy - 6, 18, 14, fg);
+        sprite.fillRect(cx - 9, cy - 6, 18, 5, fg);
+        sprite.fillRect(cx - 5, cy - 10, 3, 5, fg);
+        sprite.fillRect(cx + 2, cy - 10, 3, 5, fg);
+        return true;
+    }
+    // Team (two people)
+    if (icon == "👥" || icon == "TEAM") {
+        sprite.fillCircle(cx - 5, cy - 4, 4, fg);
+        sprite.fillCircle(cx + 5, cy - 4, 4, fg);
+        sprite.fillRect(cx - 11, cy + 2, 22, 6, fg);
+        return true;
+    }
+    // Camera
+    if (icon == "📷" || icon == "📸" || icon == "CAM" || icon == "SNAP") {
+        sprite.fillRect(cx - 10, cy - 4, 20, 11, fg);
+        sprite.fillRect(cx - 4, cy - 8, 8, 4, fg);
+        sprite.drawCircle(cx, cy + 1, 4, bg);
+        sprite.fillCircle(cx, cy + 1, 1, bg);
+        return true;
+    }
+    // Video camera (OBS)
+    if (icon == "🎥" || icon == "OBS") {
+        sprite.fillRect(cx - 10, cy - 6, 14, 12, fg);
+        sprite.fillTriangle(cx + 4, cy - 6, cx + 4, cy + 6, cx + 10, cy, fg);
+        return true;
+    }
+    // Gamepad
+    if (icon == "🎮" || icon == "GAME") {
+        sprite.fillRoundRect(cx - 10, cy - 6, 20, 12, 4, fg);
+        sprite.drawLine(cx - 6, cy - 2, cx - 6, cy + 2, bg);
+        sprite.drawLine(cx - 8, cy, cx - 4, cy, bg);
+        sprite.fillCircle(cx + 4, cy - 1, 1, bg);
+        sprite.fillCircle(cx + 7, cy + 2, 1, bg);
+        return true;
+    }
+    // Chat bubble
+    if (icon == "💬" || icon == "CHAT") {
+        sprite.fillRoundRect(cx - 10, cy - 8, 20, 12, 3, fg);
+        sprite.fillTriangle(cx - 4, cy + 4, cx + 2, cy + 4, cx - 4, cy + 9, fg);
+        sprite.drawLine(cx - 6, cy - 4, cx + 6, cy - 4, bg);
+        sprite.drawLine(cx - 6, cy - 1, cx + 3, cy - 1, bg);
+        return true;
+    }
+    // Music note
+    if (icon == "🎵" || icon == "MUSIC") {
+        sprite.fillCircle(cx - 5, cy + 5, 3, fg);
+        sprite.fillCircle(cx + 5, cy + 6, 3, fg);
+        sprite.drawLine(cx - 2, cy + 5, cx - 2, cy - 7, fg);
+        sprite.drawLine(cx + 8, cy + 6, cx + 8, cy - 6, fg);
+        sprite.drawLine(cx - 2, cy - 7, cx + 8, cy - 6, fg);
+        return true;
+    }
+    // TV
+    if (icon == "📺" || icon == "TV") {
+        sprite.drawRect(cx - 10, cy - 4, 20, 12, fg);
+        sprite.drawLine(cx - 3, cy - 4, cx - 7, cy - 10, fg);
+        sprite.drawLine(cx + 3, cy - 4, cx + 7, cy - 10, fg);
+        sprite.drawLine(cx - 4, cy + 8, cx + 4, cy + 8, fg);
+        return true;
+    }
+    // Numbers hash
+    if (icon == "🔢" || icon == "NUM") {
+        sprite.drawLine(cx - 3, cy - 8, cx - 5, cy + 8, fg);
+        sprite.drawLine(cx + 4, cy - 8, cx + 2, cy + 8, fg);
+        sprite.drawLine(cx - 8, cy - 2, cx + 8, cy - 3, fg);
+        sprite.drawLine(cx - 8, cy + 4, cx + 8, cy + 3, fg);
+        return true;
+    }
+    // Gear (settings)
+    if (icon == "⚙️" || icon == "SET") {
+        for (int a = 0; a < 8; a++) {
+            float t = a * 3.14159f / 4.0f;
+            int x0 = cx + (int)(cos(t) * 6.0f);
+            int y0 = cy + (int)(sin(t) * 6.0f);
+            int x1 = cx + (int)(cos(t) * 9.0f);
+            int y1 = cy + (int)(sin(t) * 9.0f);
+            sprite.drawLine(x0, y0, x1, y1, fg);
+        }
+        sprite.drawCircle(cx, cy, 5, fg);
+        sprite.fillCircle(cx, cy, 2, bg);
+        return true;
+    }
+    // CPU chip
+    if (icon == "🔥" || icon == "CPU") {
+        sprite.drawRect(cx - 6, cy - 6, 12, 12, fg);
+        sprite.fillRect(cx - 3, cy - 3, 6, 6, fg);
+        for (int i = -1; i <= 1; i++) {
+            sprite.drawLine(cx + i * 4, cy - 9, cx + i * 4, cy - 6, fg);
+            sprite.drawLine(cx + i * 4, cy + 6, cx + i * 4, cy + 9, fg);
+            sprite.drawLine(cx - 9, cy + i * 4, cx - 6, cy + i * 4, fg);
+            sprite.drawLine(cx + 6, cy + i * 4, cx + 9, cy + i * 4, fg);
+        }
+        return true;
+    }
+    // RAM stick
+    if (icon == "💾" || icon == "RAM") {
+        sprite.fillRect(cx - 10, cy - 4, 20, 8, fg);
+        sprite.fillRect(cx - 2, cy - 4, 4, 3, bg);
+        for (int i = 0; i < 5; i++) {
+            sprite.drawLine(cx - 8 + i * 4, cy + 4, cx - 8 + i * 4, cy + 7, fg);
+        }
+        return true;
+    }
+    // Restart circular arrow
+    if (icon == "🔄" || icon == "RESTART") {
+        sprite.drawCircle(cx, cy, 8, fg);
+        sprite.fillTriangle(cx + 2, cy - 12, cx + 9, cy - 8, cx + 2, cy - 5, fg);
+        return true;
+    }
+    // Power off
+    if (icon == "🚫" || icon == "OFF") {
+        sprite.drawCircle(cx, cy, 8, fg);
+        sprite.drawLine(cx - 6, cy + 6, cx + 6, cy - 6, fg);
+        return true;
+    }
+    // Key (SSH)
+    if (icon == "SSH") {
+        sprite.drawCircle(cx - 5, cy - 3, 4, fg);
+        sprite.drawLine(cx - 1, cy - 3, cx + 9, cy - 3, fg);
+        sprite.drawLine(cx + 5, cy - 3, cx + 5, cy, fg);
+        sprite.drawLine(cx + 8, cy - 3, cx + 8, cy + 1, fg);
+        return true;
+    }
+    return false;
 }
 
 // ===== Set Button State =====
