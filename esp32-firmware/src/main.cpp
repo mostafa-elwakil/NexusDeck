@@ -136,6 +136,18 @@ ButtonResetSchedule buttonReset = {255, 0, false};
 bool statusBarDrawn = false;
 uint16_t deckBackgroundColor = TFT_DARK_BG;
 int syncFailCount = 0;
+// Pomodoro dedicated page state
+bool pomoPageActive = false;
+int8_t pomoPageIndex = -1;
+int8_t pomoPressCandidate = -1;
+unsigned long pomoPressStart = 0;
+int pomoPageLastSecond = -1;
+bool pomoPageDirty = true;
+// Backlight alert state (phase-end notification)
+bool backlightAlert = false;
+unsigned long backlightAlertUntil = 0;
+unsigned long backlightLastToggle = 0;
+bool backlightLevel = true;
 
 // ===== Function Declarations =====
 void setupWiFi();
@@ -160,6 +172,15 @@ void scheduleButtonReset(uint8_t index, unsigned long delayMs);
 void processButtonResets();
 void updateRunningIndicators();
 String truncateText(const String& text, uint8_t maxLen);
+void openPomoPage(uint8_t index);
+void closePomoPage();
+void drawPomoPage();
+void handlePomoPageTouch();
+void pomoTapAction(uint8_t index);
+void pomoResetSession(uint8_t index);
+void pomoToggleRun(uint8_t index);
+void triggerBacklightAlert(unsigned long durationMs);
+void updateBacklight();
 
 // ===== Setup =====
 void setup() {
@@ -215,6 +236,9 @@ void setup() {
 
 // ===== Main Loop =====
 void loop() {
+    // Backlight phase-end alert blinking (non-blocking)
+    updateBacklight();
+
     // Hold top area/status bar for 2.5s to trigger StreamDeck-Setup portal anytime
     if (touch.touched()) {
         TS_Point p = touch.getPoint();
@@ -228,13 +252,31 @@ void loop() {
         }
     }
 
+    // Pomodoro press: release = tap (toggle/reset), hold 900ms = open dedicated page
+    if (pomoPressCandidate >= 0) {
+        if (!touch.touched()) {
+            uint8_t idx = pomoPressCandidate;
+            pomoPressCandidate = -1;
+            pomoTapAction(idx);
+        } else if (millis() - pomoPressStart > 900) {
+            uint8_t idx = pomoPressCandidate;
+            pomoPressCandidate = -1;
+            setButtonState(idx, 0);
+            openPomoPage(idx);
+        }
+    }
+
     unsigned long currentTime = millis();
 
     processButtonResets();
     updateRunningIndicators();
 
-    // Handle touch input
-    handleTouch();
+    // Handle touch input (grid or pomodoro page)
+    if (pomoPageActive) {
+        handlePomoPageTouch();
+    } else {
+        handleTouch();
+    }
 
     // Sync profile from server
     if (wifiConnected && (currentTime - lastSyncTime > SYNC_INTERVAL)) {
@@ -248,8 +290,18 @@ void loop() {
         lastWidgetUpdate = currentTime;
     }
 
+    // Refresh pomodoro page once per second / on state change
+    if (pomoPageActive && pomoPageIndex >= 0) {
+        Button& pb = buttons[pomoPageIndex];
+        if (pomoPageDirty || pb.timerRemaining != pomoPageLastSecond) {
+            pomoPageLastSecond = pb.timerRemaining;
+            pomoPageDirty = false;
+            drawPomoPage();
+        }
+    }
+
     // Refresh status bar periodically (CPU/RAM/profile name)
-    if (currentTime - lastStatusBarDraw > 5000) {
+    if (!pomoPageActive && currentTime - lastStatusBarDraw > 5000) {
         drawStatusBar();
         lastStatusBarDraw = currentTime;
     }
@@ -578,9 +630,17 @@ void handleTouch() {
             Serial.print("Button pressed: ");
             Serial.println(buttonIndex);
 
+            // Pomodoro buttons: defer action until release (tap) or hold (open page)
+            if (buttons[buttonIndex].hasWidget && buttons[buttonIndex].widgetType == "pomodoro") {
+                pomoPressCandidate = buttonIndex;
+                pomoPressStart = millis();
+            }
+
             setButtonState(buttonIndex, 1);
             drawButton(buttonIndex);
-            executeButtonAction(buttonIndex);
+            if (pomoPressCandidate != buttonIndex) {
+                executeButtonAction(buttonIndex);
+            }
         }
     } else {
         lastPressedButton = -1;
@@ -651,34 +711,8 @@ void executeButtonAction(uint8_t index) {
             scheduleButtonReset(index, 250);
             return;
         } else if (btn.widgetType == "pomodoro") {
-            // Pomodoro: single press = start/pause, double press = reset session
-            unsigned long now = millis();
-            if (now - btn.pomoLastTap < 600) {
-                btn.pomoLastTap = 0;
-                btn.timerRunning = false;
-                btn.pomoPhase = 0;
-                btn.pomoDone = 0;
-                btn.timerRemaining = (btn.pomoWorkSec > 0) ? btn.pomoWorkSec : 1500;
-                btn.pomoAlert = false;
-                btn.icon = "PLAY";
-                Serial.printf("Pomodoro button %d reset\n", index);
-            } else {
-                btn.pomoLastTap = now;
-                btn.timerRunning = !btn.timerRunning;
-                btn.timerLastTick = now;
-                if (btn.timerRemaining <= 0) {
-                    int dur = (btn.pomoPhase == 0) ? btn.pomoWorkSec : (btn.pomoPhase == 1 ? btn.pomoShortSec : btn.pomoLongSec);
-                    btn.timerRemaining = (dur > 0) ? dur : 1500;
-                }
-                btn.icon = btn.timerRunning ? "PAUSE" : "PLAY";
-                Serial.printf("Pomodoro button %d toggled. Running=%d Phase=%d Remaining=%d\n", index, btn.timerRunning, btn.pomoPhase, btn.timerRemaining);
-            }
-            char buf[16];
-            snprintf(buf, sizeof(buf), "%02d:%02d", btn.timerRemaining / 60, btn.timerRemaining % 60);
-            btn.label = String(buf);
-            setButtonState(index, 3);
-            drawButton(index);
-            scheduleButtonReset(index, 250);
+            // Pomodoro taps are handled on release (tap = toggle/reset, hold = open page)
+            pomoTapAction(index);
             return;
         }
     }
@@ -935,7 +969,9 @@ void syncProfile() {
                 static String lastProfileSignature;
                 if (profileSignature != lastProfileSignature) {
                     lastProfileSignature = profileSignature;
-                    drawAllButtons();
+                    if (!pomoPageActive) {
+                        drawAllButtons();
+                    }
                     Serial.println("Profile synced successfully");
                 }
             }
@@ -950,7 +986,9 @@ void syncProfile() {
     }
 
     http.end();
-    drawStatusBar();
+    if (!pomoPageActive) {
+        drawStatusBar();
+    }
 }
 
 // ===== Update Live Widgets =====
@@ -996,6 +1034,7 @@ void updateWidgets() {
                     buttons[i].pomoAlert = false;
                     buttons[i].icon = buttons[i].timerRunning ? "PAUSE" : "PLAY";
                     needsRedraw = true;
+                    pomoPageDirty = true;
                 }
                 if (buttons[i].timerRunning && millis() - buttons[i].timerLastTick >= 1000) {
                     buttons[i].timerLastTick = millis();
@@ -1017,6 +1056,8 @@ void updateWidgets() {
                         buttons[i].timerRemaining = dur;
                         buttons[i].pomoAlert = true;
                         buttons[i].pomoAlertUntil = millis() + 6000;
+                        triggerBacklightAlert(6000);
+                        pomoPageDirty = true;
                         setButtonState(i, 3);
                         scheduleButtonReset(i, 800);
                     }
@@ -1053,7 +1094,7 @@ void updateWidgets() {
         }
     }
 
-    if (needsRedraw) {
+    if (needsRedraw && !pomoPageActive) {
         for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
             if (buttons[i].hasWidget) drawButton(i);
         }
@@ -1076,6 +1117,199 @@ void updateSystemStats() {
     }
 
     statsHttp.end();
+}
+
+// ===== Backlight Alert (phase-end notification) =====
+void triggerBacklightAlert(unsigned long durationMs) {
+    backlightAlert = true;
+    backlightAlertUntil = millis() + durationMs;
+    backlightLastToggle = 0;
+    backlightLevel = true;
+    digitalWrite(TFT_BACKLIGHT, HIGH);
+}
+
+void updateBacklight() {
+    if (!backlightAlert) return;
+    if ((long)(millis() - backlightAlertUntil) >= 0) {
+        backlightAlert = false;
+        digitalWrite(TFT_BACKLIGHT, HIGH);
+        backlightLevel = true;
+        return;
+    }
+    if (millis() - backlightLastToggle >= 250) {
+        backlightLastToggle = millis();
+        backlightLevel = !backlightLevel;
+        digitalWrite(TFT_BACKLIGHT, backlightLevel ? HIGH : LOW);
+    }
+}
+
+// ===== Pomodoro Helpers =====
+int pomoPhaseDuration(Button& btn) {
+    int dur = (btn.pomoPhase == 0) ? btn.pomoWorkSec : (btn.pomoPhase == 1 ? btn.pomoShortSec : btn.pomoLongSec);
+    return (dur > 0) ? dur : 300;
+}
+
+const char* pomoPhaseName(Button& btn) {
+    return (btn.pomoPhase == 0) ? "FOCUS" : (btn.pomoPhase == 1 ? "SHORT BREAK" : "LONG BREAK");
+}
+
+uint16_t pomoPhaseColor(Button& btn) {
+    return (btn.pomoPhase == 0) ? TFT_ORANGE : (btn.pomoPhase == 1 ? TFT_GREEN : TFT_CYAN);
+}
+
+void pomoToggleRun(uint8_t index) {
+    if (index >= BUTTON_COUNT) return;
+    Button& btn = buttons[index];
+    btn.timerRunning = !btn.timerRunning;
+    btn.timerLastTick = millis();
+    if (btn.timerRemaining <= 0) {
+        btn.timerRemaining = pomoPhaseDuration(btn);
+    }
+    btn.icon = btn.timerRunning ? "PAUSE" : "PLAY";
+    pomoPageDirty = true;
+}
+
+void pomoResetSession(uint8_t index) {
+    if (index >= BUTTON_COUNT) return;
+    Button& btn = buttons[index];
+    btn.timerRunning = false;
+    btn.pomoPhase = 0;
+    btn.pomoDone = 0;
+    btn.timerRemaining = (btn.pomoWorkSec > 0) ? btn.pomoWorkSec : 1500;
+    btn.pomoAlert = false;
+    btn.icon = "PLAY";
+    pomoPageDirty = true;
+}
+
+void pomoTapAction(uint8_t index) {
+    if (index >= BUTTON_COUNT) return;
+    Button& btn = buttons[index];
+    // Double tap (release within 600ms) = reset session, single tap = start/pause
+    unsigned long now = millis();
+    if (now - btn.pomoLastTap < 600) {
+        btn.pomoLastTap = 0;
+        pomoResetSession(index);
+        Serial.printf("Pomodoro button %d reset\n", index);
+    } else {
+        btn.pomoLastTap = now;
+        pomoToggleRun(index);
+        Serial.printf("Pomodoro button %d toggled. Running=%d Phase=%d Remaining=%d\n", index, btn.timerRunning, btn.pomoPhase, btn.timerRemaining);
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d", btn.timerRemaining / 60, btn.timerRemaining % 60);
+    btn.label = String(buf);
+    setButtonState(index, 3);
+    if (!pomoPageActive) {
+        drawButton(index);
+    }
+    scheduleButtonReset(index, 250);
+}
+
+// ===== Pomodoro Dedicated Page =====
+void openPomoPage(uint8_t index) {
+    if (index >= BUTTON_COUNT) return;
+    pomoPageIndex = index;
+    pomoPageActive = true;
+    pomoPageLastSecond = -1;
+    pomoPageDirty = true;
+    Serial.printf("Pomodoro page opened for button %d\n", index);
+    drawPomoPage();
+}
+
+void closePomoPage() {
+    pomoPageActive = false;
+    pomoPageIndex = -1;
+    drawAllButtons();
+    drawStatusBar();
+    Serial.println("Pomodoro page closed");
+}
+
+void drawPomoPage() {
+    if (pomoPageIndex < 0 || pomoPageIndex >= BUTTON_COUNT) return;
+    Button& btn = buttons[pomoPageIndex];
+
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(TC_DATUM);
+
+    // Title
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("POMODORO", SCREEN_WIDTH / 2, 2, 2);
+
+    // Phase name
+    uint16_t phaseColor = pomoPhaseColor(btn);
+    tft.setTextColor(phaseColor, deckBackgroundColor);
+    tft.drawString(pomoPhaseName(btn), SCREEN_WIDTH / 2, 22, 4);
+
+    // Big countdown (alert shows DONE!)
+    tft.setTextColor(btn.pomoAlert ? TFT_YELLOW : TFT_WHITE, deckBackgroundColor);
+    if (btn.pomoAlert) {
+        tft.drawString("DONE!", SCREEN_WIDTH / 2, 52, 4);
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d", btn.timerRemaining / 60, btn.timerRemaining % 60);
+    tft.drawString(String(buf), SCREEN_WIDTH / 2, 76, 7);
+
+    // Session dots
+    uint8_t cycle = btn.pomoCycle > 0 ? btn.pomoCycle : 4;
+    if (cycle > 8) cycle = 8;
+    uint8_t doneInCycle = btn.pomoDone % (btn.pomoCycle > 0 ? btn.pomoCycle : 4);
+    int dotsWidth = (cycle - 1) * 24;
+    int dotsX = SCREEN_WIDTH / 2 - dotsWidth / 2;
+    for (uint8_t d = 0; d < cycle; d++) {
+        if (d < doneInCycle) {
+            tft.fillCircle(dotsX + d * 24, 152, 6, phaseColor);
+        } else {
+            tft.drawCircle(dotsX + d * 24, 152, 6, TFT_DARKGREY);
+        }
+    }
+
+    // Progress bar
+    int total = pomoPhaseDuration(btn);
+    float frac = (total > 0) ? (1.0f - (float)btn.timerRemaining / (float)total) : 0.0f;
+    if (frac < 0) frac = 0;
+    if (frac > 1) frac = 1;
+    int barX = 40, barW = SCREEN_WIDTH - 80, barY = 166, barH = 8;
+    tft.drawRect(barX, barY, barW, barH, TFT_DARKGREY);
+    tft.fillRect(barX + 1, barY + 1, (int)((barW - 2) * frac), barH - 2, phaseColor);
+
+    // Bottom buttons: toggle / reset / back
+    struct PageBtn { int x; int w; const char* label; };
+    PageBtn pageBtns[3] = {
+        { 8, 98, btn.timerRunning ? "PAUSE" : "START" },
+        { 111, 96, "RESET" },
+        { 212, 100, "BACK" }
+    };
+    tft.setTextDatum(MC_DATUM);
+    for (uint8_t b = 0; b < 3; b++) {
+        uint16_t bg = (b == 0 && btn.timerRunning) ? tft.color565(30, 90, 180) : tft.color565(40, 40, 60);
+        if (b == 2) bg = tft.color565(60, 40, 40);
+        tft.fillRoundRect(pageBtns[b].x, 186, pageBtns[b].w, 40, 6, bg);
+        tft.drawRoundRect(pageBtns[b].x, 186, pageBtns[b].w, 40, 6, TFT_WHITE);
+        tft.setTextColor(TFT_WHITE, bg);
+        tft.drawString(pageBtns[b].label, pageBtns[b].x + pageBtns[b].w / 2, 206, 2);
+    }
+}
+
+void handlePomoPageTouch() {
+    if (!touch.tirqTouched() || !touch.touched()) return;
+    TS_Point p = touch.getPoint();
+    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
+    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+
+    static unsigned long pomoTouchDebounce = 0;
+    if (millis() < pomoTouchDebounce) return;
+    pomoTouchDebounce = millis() + 300;
+
+    if (y < 180 || pomoPageIndex < 0) return;
+    if (x < 106) {
+        pomoToggleRun(pomoPageIndex);
+        drawPomoPage();
+    } else if (x < 208) {
+        pomoResetSession(pomoPageIndex);
+        drawPomoPage();
+    } else {
+        closePomoPage();
+    }
 }
 
 String displayIcon(const String& icon) {
@@ -1455,7 +1689,9 @@ void processButtonResets() {
     if ((long)(millis() - buttonReset.resetAt) >= 0) {
         if (buttonReset.index < BUTTON_COUNT) {
             setButtonState(buttonReset.index, 0);
-            drawButton(buttonReset.index);
+            if (!pomoPageActive) {
+                drawButton(buttonReset.index);
+            }
         }
         buttonReset.active = false;
     }
