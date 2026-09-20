@@ -180,11 +180,11 @@ class ProfilesManager {
         this.currentProfile.backgroundColor = this.currentProfile.backgroundColor || '#000000';
         this.currentProfile.buttons = deckState.buttons;
 
-        // Add live widget info
+        // Add live widget info (including widget config, e.g. pomodoro durations)
         const activeWidgets = this.liveKeys.getActiveWidgets();
-        activeWidgets.forEach(({ buttonIndex, type }) => {
+        activeWidgets.forEach(({ buttonIndex, type, config }) => {
             if (this.currentProfile.buttons[buttonIndex]) {
-                this.currentProfile.buttons[buttonIndex].widget = { type };
+                this.currentProfile.buttons[buttonIndex].widget = config ? { type, config } : { type };
             }
         });
 

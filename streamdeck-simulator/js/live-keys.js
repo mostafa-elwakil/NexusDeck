@@ -15,6 +15,7 @@ class LiveKeysManager {
             'cpu_ram': this.createCpuRamWidget.bind(this),
             'stopwatch': this.createStopwatchWidget.bind(this),
             'timer': this.createTimerWidget.bind(this),
+            'pomodoro': this.createPomodoroWidget.bind(this),
             'ping_monitor': this.createPingWidget.bind(this),
             'date': this.createDateWidget.bind(this),
             'uptime': this.createUptimeWidget.bind(this)
@@ -318,6 +319,142 @@ class LiveKeysManager {
         return widget;
     }
 
+    // Pomodoro Widget (Focus / Short Break / Long Break cycles)
+    // Controls: single press = start/pause, double press = reset session
+    createPomodoroWidget(buttonIndex, config) {
+        const workSec = Math.max(60, Math.round((config.workMinutes || 25) * 60));
+        const shortSec = Math.max(60, Math.round((config.shortBreakMinutes || 5) * 60));
+        const longSec = Math.max(60, Math.round((config.longBreakMinutes || 15) * 60));
+        const sessionsBeforeLong = Math.max(1, Math.round(config.sessionsBeforeLong || 4));
+        const autoStart = config.autoStart === true;
+
+        let phase = 'work'; // 'work' | 'short' | 'long'
+        let completedSessions = 0;
+        let remaining = workSec;
+        let running = false;
+        let endAt = null;
+        let lastClickAt = 0;
+        let alertUntil = 0;
+
+        const phaseDuration = (p) => p === 'work' ? workSec : (p === 'short' ? shortSec : longSec);
+        const phaseName = (p) => p === 'work' ? 'FOCUS' : (p === 'short' ? 'SHORT' : 'LONG');
+        const fmt = (s) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+        const sessionDots = () => {
+            let dots = '';
+            for (let i = 0; i < sessionsBeforeLong; i++) {
+                dots += i < (completedSessions % sessionsBeforeLong) ? '●' : '○';
+            }
+            return dots;
+        };
+
+        const widget = {
+            type: 'pomodoro',
+            config: {
+                workMinutes: workSec / 60,
+                shortBreakMinutes: shortSec / 60,
+                longBreakMinutes: longSec / 60,
+                sessionsBeforeLong,
+                autoStart
+            },
+            updateInterval: 250,
+            update: () => {
+                if (running && endAt) {
+                    remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+                    if (remaining === 0) {
+                        running = false;
+                        endAt = null;
+                        widget.advancePhase();
+                        return;
+                    }
+                }
+
+                const alerting = Date.now() < alertUntil;
+                let color;
+                if (alerting) {
+                    color = this.getGradient('#3e1a1a', '#8a2d2d');
+                } else if (phase === 'work') {
+                    color = this.getGradient('#3e1a1a', '#6f2d2d');
+                } else if (phase === 'short') {
+                    color = this.getGradient('#1a3e2e', '#2d6f4d');
+                } else {
+                    color = this.getGradient('#1a2e3e', '#2d4d6f');
+                }
+
+                this.deck.updateButton(buttonIndex, {
+                    label: `${phaseName(phase)} ${fmt(remaining)}\n${sessionDots()}`,
+                    icon: running ? '⏸️' : (alerting ? '🔔' : '🍅'),
+                    color: color
+                });
+            },
+            advancePhase: () => {
+                let message;
+                if (phase === 'work') {
+                    completedSessions++;
+                    const isLong = completedSessions % sessionsBeforeLong === 0;
+                    phase = isLong ? 'long' : 'short';
+                    message = `Pomodoro ${completedSessions} done! Time for a ${isLong ? 'long' : 'short'} break.`;
+                } else {
+                    phase = 'work';
+                    message = 'Break over! Back to focus.';
+                }
+                remaining = phaseDuration(phase);
+                alertUntil = Date.now() + 5000;
+                this.playTimerAlert();
+                if (typeof notificationManager !== 'undefined' && notificationManager.show) {
+                    notificationManager.show('Pomodoro', message, 'success');
+                }
+                if (this.deck.showButtonFeedback) {
+                    this.deck.showButtonFeedback(buttonIndex, 'success', 1200);
+                }
+                if (autoStart) {
+                    running = true;
+                    endAt = Date.now() + remaining * 1000;
+                }
+                widget.update();
+            },
+            toggle: () => {
+                const now = Date.now();
+                if (now - lastClickAt < 450) {
+                    lastClickAt = 0;
+                    widget.reset();
+                    return;
+                }
+                lastClickAt = now;
+                if (running) {
+                    remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+                    running = false;
+                    endAt = null;
+                } else {
+                    if (remaining <= 0) {
+                        remaining = phaseDuration(phase);
+                    }
+                    running = true;
+                    endAt = Date.now() + remaining * 1000;
+                }
+                widget.update();
+            },
+            reset: () => {
+                phase = 'work';
+                completedSessions = 0;
+                remaining = workSec;
+                running = false;
+                endAt = null;
+                alertUntil = 0;
+                widget.update();
+            }
+        };
+
+        const button = this.deck.getButton(buttonIndex);
+        if (button) {
+            button.config.action = {
+                type: 'custom',
+                handler: () => widget.toggle()
+            };
+        }
+
+        return widget;
+    }
+
     // Ping Monitor Widget
     createPingWidget(buttonIndex, config) {
         const host = config.host || '8.8.8.8';
@@ -467,7 +604,8 @@ class LiveKeysManager {
     getActiveWidgets() {
         return Array.from(this.activeWidgets.entries()).map(([index, widget]) => ({
             buttonIndex: index,
-            type: widget.type
+            type: widget.type,
+            config: widget.config || null
         }));
     }
 }

@@ -99,6 +99,15 @@ struct Button {
     int timerRemaining;
     int timerDuration;
     unsigned long timerLastTick;
+    uint8_t pomoPhase;      // 0=work, 1=short break, 2=long break
+    uint8_t pomoDone;       // completed work sessions
+    int pomoWorkSec;
+    int pomoShortSec;
+    int pomoLongSec;
+    uint8_t pomoCycle;      // sessions before long break
+    bool pomoAlert;
+    unsigned long pomoAlertUntil;
+    unsigned long pomoLastTap;
 };
 
 Button buttons[BUTTON_COUNT];
@@ -185,6 +194,15 @@ void setup() {
         buttons[i].timerRemaining = 0;
         buttons[i].timerDuration = 300;
         buttons[i].timerLastTick = 0;
+        buttons[i].pomoPhase = 0;
+        buttons[i].pomoDone = 0;
+        buttons[i].pomoWorkSec = 1500;
+        buttons[i].pomoShortSec = 300;
+        buttons[i].pomoLongSec = 900;
+        buttons[i].pomoCycle = 4;
+        buttons[i].pomoAlert = false;
+        buttons[i].pomoAlertUntil = 0;
+        buttons[i].pomoLastTap = 0;
     }
 
     // Draw initial UI
@@ -629,6 +647,36 @@ void executeButtonAction(uint8_t index) {
             drawButton(index);
             scheduleButtonReset(index, 250);
             return;
+        } else if (btn.widgetType == "pomodoro") {
+            // Pomodoro: single press = start/pause, double press = reset session
+            unsigned long now = millis();
+            if (now - btn.pomoLastTap < 600) {
+                btn.pomoLastTap = 0;
+                btn.timerRunning = false;
+                btn.pomoPhase = 0;
+                btn.pomoDone = 0;
+                btn.timerRemaining = (btn.pomoWorkSec > 0) ? btn.pomoWorkSec : 1500;
+                btn.pomoAlert = false;
+                btn.icon = "PLAY";
+                Serial.printf("Pomodoro button %d reset\n", index);
+            } else {
+                btn.pomoLastTap = now;
+                btn.timerRunning = !btn.timerRunning;
+                btn.timerLastTick = now;
+                if (btn.timerRemaining <= 0) {
+                    int dur = (btn.pomoPhase == 0) ? btn.pomoWorkSec : (btn.pomoPhase == 1 ? btn.pomoShortSec : btn.pomoLongSec);
+                    btn.timerRemaining = (dur > 0) ? dur : 1500;
+                }
+                btn.icon = btn.timerRunning ? "PAUSE" : "PLAY";
+                Serial.printf("Pomodoro button %d toggled. Running=%d Phase=%d Remaining=%d\n", index, btn.timerRunning, btn.pomoPhase, btn.timerRemaining);
+            }
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d:%02d", btn.timerRemaining / 60, btn.timerRemaining % 60);
+            btn.label = String(buf);
+            setButtonState(index, 3);
+            drawButton(index);
+            scheduleButtonReset(index, 250);
+            return;
         }
     }
 
@@ -794,6 +842,11 @@ void syncProfile() {
                         buttons[i].actionData = "{}";
                         buttons[i].hasWidget = false;
                         buttons[i].widgetType = "";
+                        buttons[i].timerRunning = false;
+                        buttons[i].timerRemaining = 0;
+                        buttons[i].pomoPhase = 0;
+                        buttons[i].pomoDone = 0;
+                        buttons[i].pomoAlert = false;
                         continue;
                     }
 
@@ -840,6 +893,30 @@ void syncProfile() {
                         } else if (buttons[i].widgetType == "stopwatch") {
                             if (!buttons[i].timerRunning && buttons[i].timerRemaining == 0) {
                                 buttons[i].label = "00:00";
+                                if (buttons[i].icon.length() == 0) {
+                                    buttons[i].icon = "PLAY";
+                                }
+                            }
+                        } else if (buttons[i].widgetType == "pomodoro") {
+                            int workMin = 25, shortMin = 5, longMin = 15, cyc = 4;
+                            if (!btnObj["widget"]["config"].isNull()) {
+                                workMin = btnObj["widget"]["config"]["workMinutes"] | 25;
+                                shortMin = btnObj["widget"]["config"]["shortBreakMinutes"] | 5;
+                                longMin = btnObj["widget"]["config"]["longBreakMinutes"] | 15;
+                                cyc = btnObj["widget"]["config"]["sessionsBeforeLong"] | 4;
+                            }
+                            buttons[i].pomoWorkSec = workMin * 60;
+                            buttons[i].pomoShortSec = shortMin * 60;
+                            buttons[i].pomoLongSec = longMin * 60;
+                            buttons[i].pomoCycle = (cyc > 0) ? cyc : 4;
+                            if (!buttons[i].timerRunning) {
+                                buttons[i].pomoPhase = 0;
+                                buttons[i].pomoDone = 0;
+                                buttons[i].timerRemaining = buttons[i].pomoWorkSec;
+                                buttons[i].pomoAlert = false;
+                                char buf[16];
+                                snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                                buttons[i].label = String(buf);
                                 if (buttons[i].icon.length() == 0) {
                                     buttons[i].icon = "PLAY";
                                 }
@@ -911,6 +988,44 @@ void updateWidgets() {
                         needsRedraw = true;
                     }
                 }
+            } else if (buttons[i].widgetType == "pomodoro") {
+                if (buttons[i].pomoAlert && (long)(millis() - buttons[i].pomoAlertUntil) >= 0) {
+                    buttons[i].pomoAlert = false;
+                    buttons[i].icon = buttons[i].timerRunning ? "PAUSE" : "PLAY";
+                    needsRedraw = true;
+                }
+                if (buttons[i].timerRunning && millis() - buttons[i].timerLastTick >= 1000) {
+                    buttons[i].timerLastTick = millis();
+                    if (buttons[i].timerRemaining > 0) {
+                        buttons[i].timerRemaining--;
+                    }
+                    if (buttons[i].timerRemaining <= 0) {
+                        if (buttons[i].pomoPhase == 0) {
+                            buttons[i].pomoDone++;
+                            uint8_t cycle = buttons[i].pomoCycle > 0 ? buttons[i].pomoCycle : 4;
+                            buttons[i].pomoPhase = (buttons[i].pomoDone % cycle == 0) ? 2 : 1;
+                            Serial.printf("Pomodoro session %d finished!\n", buttons[i].pomoDone);
+                        } else {
+                            buttons[i].pomoPhase = 0;
+                            Serial.println("Pomodoro break finished!");
+                        }
+                        int dur = buttons[i].pomoPhase == 0 ? buttons[i].pomoWorkSec : (buttons[i].pomoPhase == 1 ? buttons[i].pomoShortSec : buttons[i].pomoLongSec);
+                        if (dur <= 0) dur = 300;
+                        buttons[i].timerRemaining = dur;
+                        buttons[i].pomoAlert = true;
+                        buttons[i].pomoAlertUntil = millis() + 6000;
+                        setButtonState(i, 3);
+                        scheduleButtonReset(i, 800);
+                    }
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                    buttons[i].label = String(buf);
+                    needsRedraw = true;
+                }
+                if (buttons[i].pomoAlert) {
+                    buttons[i].icon = ((millis() / 500) % 2 == 0) ? "DONE" : "PLAY";
+                    needsRedraw = true;
+                }
             } else if (buttons[i].widgetType == "clock") {
                 unsigned long secs = (millis() / 1000) % 86400;
                 int h = (secs / 3600) % 24;
@@ -967,6 +1082,7 @@ String displayIcon(const String& icon) {
     if (icon == "TMR" || icon == "⏲" || icon == "⏲️") return "TMR";
     if (icon == "TIME" || icon == "🕐" || icon == "🕒") return "TIME";
     if (icon == "SW" || icon == "⏱" || icon == "⏱️") return "SW";
+    if (icon == "🍅") return "POMO";
     if (icon == "💻") return "PC";
     if (icon == "⚡") return "CMD";
     if (icon == "🐳") return "DOCKER";

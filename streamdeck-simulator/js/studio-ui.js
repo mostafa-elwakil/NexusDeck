@@ -751,9 +751,32 @@ class StudioUI {
                         <option value="cpu_ram">CPU & RAM Monitor</option>
                         <option value="stopwatch">Stopwatch</option>
                         <option value="timer">Timer</option>
+                        <option value="pomodoro">Pomodoro</option>
                         <option value="ping_monitor">Ping Monitor</option>
                         <option value="uptime">Uptime</option>
                     </select>
+                </div>
+                <div id="pomodoro-config" style="display: none; margin-top: 8px;">
+                    <div class="form-group">
+                        <label>Focus (minutes)</label>
+                        <input type="number" id="action-pomo-work" class="form-control" min="1" max="180" value="25">
+                    </div>
+                    <div class="form-group">
+                        <label>Short break (minutes)</label>
+                        <input type="number" id="action-pomo-short" class="form-control" min="1" max="60" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label>Long break (minutes)</label>
+                        <input type="number" id="action-pomo-long" class="form-control" min="1" max="90" value="15">
+                    </div>
+                    <div class="form-group">
+                        <label>Sessions before long break</label>
+                        <input type="number" id="action-pomo-sessions" class="form-control" min="1" max="12" value="4">
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="action-pomo-autostart"> Auto-start next phase</label>
+                    </div>
+                    <small style="display: block; margin-top: 6px; opacity: 0.7;">Press = start/pause · double-press = reset session</small>
                 </div>
             `,
             'switch_profile': `
@@ -769,9 +792,39 @@ class StudioUI {
             configContainer.innerHTML = configs[actionType];
         }
 
+        if (actionType === 'widget') {
+            this.setupWidgetConfig();
+        }
+
         if (actionType === 'obs_control') {
             this.setupObsConfig(existingAction);
         }
+    }
+
+    setupWidgetConfig() {
+        const typeSelect = document.getElementById('action-widget-type');
+        const pomoConfig = document.getElementById('pomodoro-config');
+        if (!typeSelect || !pomoConfig) return;
+        const syncPomoVisibility = () => {
+            pomoConfig.style.display = typeSelect.value === 'pomodoro' ? 'block' : 'none';
+        };
+        typeSelect.addEventListener('change', syncPomoVisibility);
+        syncPomoVisibility();
+    }
+
+    buildWidgetConfig(widgetType) {
+        if (widgetType !== 'pomodoro') return {};
+        const num = (id, fallback) => {
+            const v = parseFloat(document.getElementById(id)?.value);
+            return Number.isFinite(v) && v > 0 ? v : fallback;
+        };
+        return {
+            workMinutes: num('action-pomo-work', 25),
+            shortBreakMinutes: num('action-pomo-short', 5),
+            longBreakMinutes: num('action-pomo-long', 15),
+            sessionsBeforeLong: Math.max(1, Math.round(num('action-pomo-sessions', 4))),
+            autoStart: document.getElementById('action-pomo-autostart')?.checked === true
+        };
     }
 
     setupObsConfig(existingAction = null) {
@@ -874,7 +927,7 @@ class StudioUI {
         // Handle widgets
         if (actionType === 'widget') {
             const widgetType = document.getElementById('action-widget-type').value;
-            this.liveKeys.registerWidget(this.selectedButton.index, widgetType);
+            this.liveKeys.registerWidget(this.selectedButton.index, widgetType, this.buildWidgetConfig(widgetType));
         } else {
             this.liveKeys.unregisterWidget(this.selectedButton.index);
         }
