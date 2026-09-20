@@ -40,6 +40,7 @@ const int SYNC_INTERVAL = 5000; // Sync every 5 seconds
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320
 #define BUTTON_PADDING 4
+#define TFT_DARK_BG 0x18C5 // #1a1a2e
 
 // Calculate button dimensions
 #define BUTTON_WIDTH ((SCREEN_WIDTH - (BUTTON_PADDING * (GRID_COLS + 1))) / GRID_COLS)
@@ -70,6 +71,7 @@ unsigned long lastWidgetUpdate = 0;
 int8_t lastPressedButton = -1;
 bool wifiConnected = false;
 bool serverAvailable = false;
+String lastProfileSignature = "";
 
 // ===== Function Declarations =====
 void setupWiFi();
@@ -106,7 +108,7 @@ void setup() {
     for (int i = 0; i < BUTTON_COUNT; i++) {
         buttons[i].label = String(i + 1);
         buttons[i].icon = "";
-        buttons[i].color = TFT_DARKGREY;
+        buttons[i].color = TFT_DARK_BG;
         buttons[i].actionType = "";
         buttons[i].actionData = "";
         buttons[i].hasWidget = false;
@@ -147,13 +149,13 @@ void setupDisplay() {
     Serial.println("Initializing display...");
     tft.init();
     tft.setRotation(0); // Portrait mode
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(TFT_DARK_BG);
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(1);
 
     // Show splash screen
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.fillScreen(TFT_DARK_BG);
+    tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
     tft.setTextDatum(MC_DATUM);
     tft.drawString("StreamDeck CYD", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 4);
     tft.drawString("Initializing...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
@@ -175,7 +177,7 @@ void setupWiFi() {
     Serial.print("Connecting to WiFi: ");
     Serial.println(WIFI_SSID);
 
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(TFT_DARK_BG);
     tft.setTextDatum(MC_DATUM);
     tft.drawString("Connecting to WiFi...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2, 2);
 
@@ -194,7 +196,7 @@ void setupWiFi() {
         Serial.print("IP Address: ");
         Serial.println(WiFi.localIP());
 
-        tft.fillScreen(TFT_BLACK);
+        tft.fillScreen(TFT_DARK_BG);
         tft.drawString("WiFi Connected!", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 2);
         tft.drawString(WiFi.localIP().toString(), SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
         delay(2000);
@@ -203,7 +205,7 @@ void setupWiFi() {
         Serial.println("\nWiFi connection failed!");
         Serial.println("Running in offline mode...");
 
-        tft.fillScreen(TFT_BLACK);
+        tft.fillScreen(TFT_DARK_BG);
         tft.drawString("WiFi Failed", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 2);
         tft.drawString("Offline Mode", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
         delay(2000);
@@ -263,7 +265,6 @@ void drawButton(uint8_t index) {
 
 // ===== Draw All Buttons =====
 void drawAllButtons() {
-    tft.fillScreen(TFT_BLACK);
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         drawButton(i);
     }
@@ -402,6 +403,7 @@ void syncProfile() {
 
             if (!error && doc.containsKey("buttons")) {
                 JsonArray buttonsArray = doc["buttons"];
+                String profileSignature;
 
                 for (uint8_t i = 0; i < BUTTON_COUNT && i < buttonsArray.size(); i++) {
                     JsonObject btnObj = buttonsArray[i];
@@ -419,10 +421,17 @@ void syncProfile() {
                         buttons[i].hasWidget = true;
                         buttons[i].widgetType = btnObj["widget"]["type"] | "";
                     }
+
+                    profileSignature += buttons[i].label + "|" + buttons[i].icon + "|" +
+                        buttons[i].actionType + "|" + buttons[i].actionData + "|" +
+                        String(buttons[i].color) + "|" + buttons[i].widgetType + ";";
                 }
 
-                drawAllButtons();
-                Serial.println("Profile synced successfully");
+                if (profileSignature != lastProfileSignature) {
+                    lastProfileSignature = profileSignature;
+                    drawAllButtons();
+                    Serial.println("Profile synced successfully");
+                }
             }
         }
     } else {
@@ -452,7 +461,9 @@ void updateWidgets() {
     }
 
     if (needsRedraw) {
-        drawAllButtons();
+        for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+            if (buttons[i].hasWidget) drawButton(i);
+        }
     }
 }
 
@@ -466,7 +477,7 @@ void setButtonState(uint8_t index, uint8_t state) {
 // ===== Parse Color from Hex String =====
 uint16_t parseColor(String colorHex) {
     if (colorHex.length() < 7 || colorHex[0] != '#') {
-        return TFT_DARKGREY;
+        return TFT_DARK_BG;
     }
 
     colorHex = colorHex.substring(1); // Remove #

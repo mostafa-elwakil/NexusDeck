@@ -1094,6 +1094,30 @@ def set_profile():
         'message': 'Profile updated'
     })
 
+
+@app.route('/api/set-background', methods=['POST'])
+def set_background():
+    """Update ESP32 deck background color on the active profile."""
+    global current_profile
+    data = request.json or {}
+    color = (data.get('backgroundColor') or data.get('color') or '').strip()
+
+    log_request('POST /api/set-background', f'color={color}')
+
+    if not re.match(r'^#[0-9a-fA-F]{6}$', color):
+        return jsonify({
+            'success': False,
+            'error': 'backgroundColor must be a hex color like #000000'
+        }), 400
+
+    current_profile['backgroundColor'] = color
+    _persist_profile(current_profile)
+
+    return jsonify({
+        'success': True,
+        'backgroundColor': color
+    })
+
 @app.route('/api/set-esp-ip', methods=['POST'])
 def set_esp_ip():
     data = request.json

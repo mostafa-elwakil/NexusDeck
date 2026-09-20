@@ -7,7 +7,7 @@ class Button:
     """Interactive button widget"""
 
     def __init__(self, x, y, width, height, text="", icon="",
-                 bg_color=0x2196F3, text_color=0xFFFF,
+                 bg_color=0x18C5, text_color=0xFFFF,
                  action_type=None, action_data=None):
         self.x = x
         self.y = y

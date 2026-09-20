@@ -13,6 +13,7 @@ class StudioUI {
         this.editorMode = 'player'; // 'player' or 'studio'
         this.theme = localStorage.getItem('streamdeck_theme') || 'dark';
         this.deviceStatusTimer = null;
+        this.espSettings = null;
         this.obsHandlers = { operationChange: null, testClick: null };
 
         this.iconPresets = [

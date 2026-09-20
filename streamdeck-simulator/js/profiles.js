@@ -24,7 +24,7 @@ class ProfilesManager {
                 const parsed = JSON.parse(stored);
                 this.profiles = defaults.map(def => {
                     const existing = parsed.find(p => p.name === def.name);
-                    return existing ? { ...existing, size: 'cyd', rows: 3, cols: 4 } : def;
+                    return existing ? { ...existing, backgroundColor: existing.backgroundColor || '#000000', size: 'cyd', rows: 3, cols: 4 } : def;
                 });
                 parsed.forEach(p => {
                     if (!defaults.some(d => d.name === p.name)) {
@@ -177,6 +177,7 @@ class ProfilesManager {
         this.currentProfile.size = deckState.size;
         this.currentProfile.rows = deckState.rows;
         this.currentProfile.cols = deckState.cols;
+        this.currentProfile.backgroundColor = this.currentProfile.backgroundColor || '#000000';
         this.currentProfile.buttons = deckState.buttons;
 
         // Add live widget info
@@ -220,6 +221,7 @@ class ProfilesManager {
                 size: this.deck.config.size,
                 rows: this.deck.config.rows,
                 cols: this.deck.config.cols,
+                backgroundColor: '#000000',
                 buttons: Array(this.deck.getButtonCount()).fill(null).map(() => ({
                     label: '',
                     icon: '',
@@ -366,6 +368,7 @@ class ProfilesManager {
                 size: 'cyd',
                 rows: 3,
                 cols: 4,
+                backgroundColor: '#000000',
                 buttons: [
                     { label: 'VS Code', icon: '💻', color: '#007acc', action: { type: 'open_app', app: 'code' } },
                     { label: 'Terminal', icon: '⚡', color: '#1a1a2e', action: { type: 'open_app', app: 'wt.exe' } },
@@ -388,6 +391,7 @@ class ProfilesManager {
                 size: 'cyd',
                 rows: 3,
                 cols: 4,
+                backgroundColor: '#000000',
                 buttons: [
                     { label: 'Spotify', icon: '🎵', color: '#1db954', action: { type: 'open_url', url: 'https://open.spotify.com' } },
                     { label: 'YouTube', icon: '📺', color: '#ff0000', action: { type: 'open_url', url: 'https://youtube.com' } },
@@ -410,6 +414,7 @@ class ProfilesManager {
                 size: 'cyd',
                 rows: 3,
                 cols: 4,
+                backgroundColor: '#000000',
                 buttons: [
                     { label: 'OBS', icon: '🎥', color: '#302e31', action: { type: 'open_app', app: 'obs64.exe' } },
                     { label: 'Scene: Game', icon: '🎮', color: '#2496ed', action: { type: 'obs_control', operation: 'set_scene', scene: 'Game' } },
@@ -432,6 +437,7 @@ class ProfilesManager {
                 size: 'cyd',
                 rows: 3,
                 cols: 4,
+                backgroundColor: '#000000',
                 buttons: [
                     { label: 'Gmail', icon: '📧', color: '#ea4335', action: { type: 'open_url', url: 'https://mail.google.com' } },
                     { label: 'Calendar', icon: '📅', color: '#4285f4', action: { type: 'open_url', url: 'https://calendar.google.com' } },

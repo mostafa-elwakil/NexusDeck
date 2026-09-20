@@ -22,6 +22,7 @@ class StreamDeck:
         self.last_sync = 0
         self.sync_interval = 1000  # 1 second (near real-time)
         self.profile_name = "Default"
+        self.status = None
 
         # Calculate button dimensions
         self.button_width = display.width // grid_cols
@@ -42,45 +43,51 @@ class StreamDeck:
                     self.button_width - 2,  # -2 for border spacing
                     self.button_height - 2,
                     text=f"{row * self.grid_cols + col + 1}",
-                    bg_color=0x333333
+                    bg_color=0x18C5  # Dark theme background #1a1a2e
                 )
                 self.buttons.append(btn)
 
     def draw_status(self, status="idle"):
         """Draw connection status indicator"""
+        if self.status == status:
+            return
+
+        self.status = status
         colors = {
             "connected": 0x07E0,  # Green
             "syncing": 0xFFE0,    # Yellow
             "error": 0xF800       # Red
         }
-        color = colors.get(status, 0x333333)
+        color = colors.get(status, 0x18C5)
 
         # Top-right corner indicator
         self.display.fill_rect(self.display.width - 10, 2, 8, 8, color)
 
     def draw(self):
         """Draw all buttons"""
-        self.display.fill(0x000000)  # Black background
+        self.display.fill(0x18C5)  # Dark theme background #1a1a2e
 
         for btn in self.buttons:
             btn.draw(self.display)
 
+        self.status = None
         self.draw_status("connected")
 
     def sync_with_server(self):
         """Fetch profile from server"""
         try:
             print("Syncing with server...")
-            self.draw_status("syncing")
 
             url = f"{self.server_url}/api/get-profile"
             profile = http_get(url, timeout=3)
 
             if profile:
-                self.load_profile(profile)
+                changed = self.load_profile(profile)
+                if changed:
+                    self.draw()
                 self.draw_status("connected")
                 print("Sync successful!")
-                return True
+                return changed
             else:
                 self.draw_status("error")
                 print("Sync failed!")
@@ -95,23 +102,41 @@ class StreamDeck:
         """Load profile data into buttons"""
         try:
             buttons_data = profile.get('buttons', [])
+            changed = False
 
             for i, btn_data in enumerate(buttons_data):
                 if i >= len(self.buttons):
                     break
 
                 btn = self.buttons[i]
-                btn.text = btn_data.get('text', '')
-                btn.icon = btn_data.get('icon', '')
-                btn.bg_color = self.parse_color(btn_data.get('bgColor', '#2196F3'))
-                btn.action_type = btn_data.get('actionType')
-                btn.action_data = btn_data.get('actionData')
+                new_text = btn_data.get('text', btn_data.get('label', ''))
+                new_icon = btn_data.get('icon', '')
+                new_bg_color = self.parse_color(btn_data.get('bgColor', btn_data.get('color', '#1a1a2e')))
+                new_action_type = btn_data.get('actionType')
+                new_action_data = btn_data.get('actionData')
 
-            self.profile_name = profile.get('name', 'Default')
+                if (btn.text != new_text or btn.icon != new_icon or
+                        btn.bg_color != new_bg_color or
+                        btn.action_type != new_action_type or
+                        btn.action_data != new_action_data):
+                    btn.text = new_text
+                    btn.icon = new_icon
+                    btn.bg_color = new_bg_color
+                    btn.action_type = new_action_type
+                    btn.action_data = new_action_data
+                    changed = True
+
+            new_profile_name = profile.get('name', 'Default')
+            if self.profile_name != new_profile_name:
+                self.profile_name = new_profile_name
+                changed = True
+
             print(f"Loaded profile: {self.profile_name}")
+            return changed
 
         except Exception as e:
             print(f"Profile load error: {e}")
+            return False
 
     def parse_color(self, color_str):
         """Parse hex color string to RGB565"""
@@ -126,7 +151,7 @@ class StreamDeck:
 
             return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
         except:
-            return 0x2196F3  # Default blue
+            return 0x18C5  # Default dark #1a1a2e
 
     def handle_touch(self):
         """Handle touch input"""
@@ -139,7 +164,7 @@ class StreamDeck:
             for btn in self.buttons:
                 if btn.contains_point(x, y):
                     btn.on_press()
-                    self.draw()
+                    btn.draw(self.display)
 
                     # Wait for release
                     while self.touch.is_touched():
@@ -147,7 +172,7 @@ class StreamDeck:
 
                     # Execute action
                     action = btn.on_release()
-                    self.draw()
+                    btn.draw(self.display)
 
                     if action:
                         self.execute_action(action)
@@ -184,7 +209,6 @@ class StreamDeck:
                 now = time.ticks_ms()
                 if time.ticks_diff(now, self.last_sync) > self.sync_interval:
                     self.sync_with_server()
-                    self.draw()
                     self.last_sync = now
                     gc.collect()  # Clean up memory
 
