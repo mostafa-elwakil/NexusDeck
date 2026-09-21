@@ -1,32 +1,39 @@
 # Dock Ops StreamDeck
 
-A network-connected Stream Deck built around the ESP32-2432S028 CYD display and a Windows companion simulator.
+A network-connected Stream Deck built around the ESP32-2432S028 CYD display and a Windows companion simulator + Flask server.
 
 ## Features
 
-- 12-button ESP32 touch interface in landscape mode
-- XPT2046 touch input with CYD-specific SPI pins
-- Wi-Fi profile synchronization every few seconds
-- CPU and RAM widgets as separate buttons
-- Windows actions such as opening URLs, applications, and commands
-- Browser-based simulator and profile editor
-- Flask companion server for ESP32 integration
+- **12-button ESP32 touch interface** — fixed 4×3 grid in landscape mode, matching the web simulator exactly
+- **No hardcoded Wi-Fi or server IP** — first boot (or a 2.5s hold on the status bar) opens a `StreamDeck-Setup` Wi-Fi captive portal where you enter Wi-Fi credentials, the server URL, and the background color
+- **~1 second profile synchronization** — the ESP32 polls the server every second; changing a profile on either side syncs to the other automatically
+- **Real drawn icons** — button icons render as vector shapes on the ESP32 screen (play, clock, camera, envelope, gear, tomato, …), with text fallback for unknown icons
+- **Live widgets with real countdowns on ESP32** — timer, stopwatch, clock, uptime, CPU/RAM
+- **Pomodoro timer with full control + dedicated full-screen page** — focus / short break / long break cycles, configurable durations, tap = start/pause, double-tap = reset, hold = open page (START/PAUSE, RESET, BACK); phase end triggers a **backlight blink alert**
+- **Profile switching from the ESP32** — a `Switch Profile` button cycles through all profiles (or jumps to a named one) and both screens update instantly
+- **Background color control** — per-profile background synced from the web, overridable from the ESP32 setup portal color picker
+- **Windows actions** — open URLs/apps/commands, OBS Studio control (WebSocket), Docker, ping/HTTP checks, macros, custom scripts
+- **Browser simulator + Studio editor** — design buttons, live widgets, and profiles; every Apply syncs to the server and the ESP32
+- **Hardened companion server** — rate limiting, CORS restricted to localhost, input validation, command-injection protection
 
 ## Project Structure
 
 ```text
 esp32-firmware/       PlatformIO Arduino firmware for ESP32-2432S028
-streamdeck-simulator/ Browser simulator, profile editor, and Flask server
+streamdeck-simulator/ Browser simulator, Studio profile editor, and Flask server
+  server/             server.py, requirements.txt, profile_state.json, server_settings.json
+  presets/            devops, media, obs, productivity profiles (all 4×3)
 esp32-micropython/    MicroPython alternative implementation
 ```
 
 ## Requirements
 
 - ESP32-2432S028 / CYD board
-- Windows PC on the same Wi-Fi network as the ESP32
+- Windows PC on the same network as the ESP32 (**2.4 GHz** Wi-Fi — ESP32 does not support 5 GHz)
 - Python 3.8 or newer
-- PlatformIO
+- PlatformIO (for firmware builds)
 - USB cable and an available serial port
+- Windows Firewall must allow inbound TCP traffic on port `8765`
 
 ## Start the Simulator
 
@@ -45,34 +52,36 @@ http://localhost:8765
 
 Open the simulator through that URL. The server must be running for profile synchronization and computer actions.
 
-## Configure ESP32
+## Configure the ESP32 (No Code Editing Needed)
 
-Copy the example configuration and edit it with your local Wi-Fi and computer address:
+Wi-Fi credentials, the server URL, and the background color are entered through a
+captive portal — `esp32-firmware/include/config.h` values are **ignored** by the firmware.
 
-```powershell
-Copy-Item esp32-firmware/include/config.example.h esp32-firmware/include/config.h
-```
+1. Flash the firmware (see below) and power the ESP32.
+2. On first boot the screen shows **“WiFi Setup Needed”**.
+3. On your phone/PC, connect to the **`StreamDeck-Setup`** Wi-Fi network (password: `password123`).
+4. Open **`http://192.168.4.1`** and enter:
+   - your home/office Wi-Fi SSID + password,
+   - **Server URL**, e.g. `http://192.168.1.50:8765` (your PC’s LAN IP — find it with `ipconfig`),
+   - **Background color** from the picker (or leave it to follow the active profile).
+5. Save — the ESP32 restarts and connects automatically. Settings persist across reboots.
 
-Set these values in `esp32-firmware/include/config.h`:
+To change settings later, **hold the top status bar for ~2.5 seconds** to reopen the portal.
 
-```cpp
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL = "http://YOUR_COMPUTER_IP:8765";
-```
-
-`config.h` is ignored by Git and should never be committed.
+> If the server PC gets a new DHCP address, just reopen the portal and update the Server URL —
+> or reserve a static IP for the PC in your router to avoid this entirely.
 
 ## Build and Upload Firmware
 
 ```powershell
 cd esp32-firmware
 pio run
-pio run -t upload --upload-port COM12
+pio run -t upload
 pio device monitor --baud 115200
 ```
 
-Replace `COM12` with the serial port assigned to your board. Close the serial monitor before uploading.
+Close the serial monitor before uploading. Libraries (`TFT_eSPI`, `ArduinoJson`,
+XPT2046 Touch, `WiFiManager`, …) are fetched automatically from `platformio.ini`.
 
 The CYD display uses these hardware connections:
 
@@ -93,18 +102,71 @@ The CYD display uses these hardware connections:
 ## Use the Device
 
 1. Start the simulator server.
-2. Power the ESP32 and wait for Wi-Fi connection.
+2. Power the ESP32 and complete the Wi-Fi setup portal (first boot only).
 3. Open `http://localhost:8765/` in a browser.
-4. Edit buttons in Studio mode and save the profile.
-5. The ESP32 retrieves the updated profile automatically.
-6. Touch a button on the ESP32 to execute its configured action on the companion computer.
+4. Press `Ctrl+E` for Studio mode, edit buttons, and click **Apply Changes** — the ESP32 updates within ~1 second.
+5. Touch a button on the ESP32 to execute its configured action on the companion computer.
 
-The serial monitor prints Wi-Fi status, profile synchronization, touch coordinates, action payloads, and action responses.
+### Pomodoro gestures (ESP32)
+
+| Gesture | Result |
+| --- | --- |
+| Tap pomodoro button | Start / pause |
+| Double-tap pomodoro button | Reset session |
+| Hold pomodoro button (~1s) | Open dedicated full-screen page |
+| Page buttons | START/PAUSE · RESET · BACK |
+
+When a focus/break phase ends, the **backlight blinks for ~6 seconds** as the alert
+(plus the on-screen `DONE!` flash). The timer keeps running if you leave the page.
+
+### Switching profiles from the ESP32
+
+Assign any button the **Switch Profile (Cycle)** action type in Studio (optionally with a
+target profile name). Each press switches the server profile and refreshes both screens.
+
+The serial monitor (115200 baud) prints Wi-Fi status, profile synchronization, touch coordinates, action payloads, and action responses.
+
+## Web Studio Quick Reference
+
+| Shortcut / Button | Action |
+| --- | --- |
+| `Ctrl+E` | Toggle Studio mode |
+| `Ctrl+S` | Save current profile |
+| `ESC` | Close Inspector |
+| Apply Changes | Save + sync to server and ESP32 instantly |
+| Test Action | Execute the selected button’s action from the browser |
+
+## Server API
+
+Base URL: `http://<pc-ip>:8765`
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/api/health` | GET | Server health check |
+| `/api/system-stats` | GET | CPU/RAM stats for widgets |
+| `/api/get-profile` | GET | Active profile (ESP32 polls this; sends `X-Server-IP`) |
+| `/api/set-profile` | POST | Replace the active profile |
+| `/api/execute-action` | POST | Execute an action (`open_app`, `run_command`, `obs_control`, `switch_profile`, …) |
+| `/api/device-status` | GET | Companion + ESP32 sync status for the web UI |
+| `/api/settings` | GET/POST | Server/device settings database |
+| `/api/set-background` | POST | Update active profile background color (`#rrggbb`) |
+| `/api/set-esp-ip` | POST | Record the ESP32 address |
+| `/api/open-app` | POST | Open an application |
+| `/api/run-command` | POST | Run a shell command |
+| `/api/ping` | POST | Ping a host |
+| `/api/http-proxy` | POST | Proxied HTTP check |
+| `/api/obs-control` | POST | OBS WebSocket actions |
+| `/api/obs-status` | POST | OBS connectivity + recording state |
+
+Persistent server files (survive restarts):
+
+- `server/profile_state.json` — last active profile
+- `server/server_settings.json` — settings DB (ESP32 IP, ports, options)
+- `presets/*.json` — built-in profiles, all fixed to the 4×3 CYD layout
 
 ## Notes
 
 - The ESP32 and computer must be on the same network.
-- Use a 2.4 GHz Wi-Fi network; ESP32 does not support 5 GHz Wi-Fi.
-- Windows Firewall must allow inbound TCP traffic on port `8765`.
-- Keep `esp32-firmware/include/config.h` private.
+- The grid is locked to 4×3 on both web and ESP32 — it cannot be resized.
+- Keep `esp32-firmware/include/config.h` private (it is ignored by Git).
 - The companion server executes configured computer actions, so run it only on a trusted network.
