@@ -418,6 +418,105 @@ def resolve_app_executable(app_name):
     return None
 
 
+# Virtual-key codes for the keyboard_shortcut action (Windows keybd_event)
+KEYBOARD_MODIFIERS = {'ctrl': 0x11, 'alt': 0x12, 'shift': 0x10, 'win': 0x5B}
+
+KEYBOARD_KEYS = {
+    'enter': 0x0D, 'return': 0x0D, 'tab': 0x09,
+    'esc': 0x1B, 'escape': 0x1B, 'space': 0x20, 'spacebar': 0x20,
+    'backspace': 0x08, 'delete': 0x2E, 'del': 0x2E,
+    'insert': 0x2D, 'ins': 0x2D, 'home': 0x24, 'end': 0x23,
+    'pgup': 0x21, 'pageup': 0x21, 'pgdn': 0x22, 'pagedown': 0x22,
+    'up': 0x26, 'down': 0x28, 'left': 0x25, 'right': 0x27,
+    'capslock': 0x14, 'numlock': 0x90, 'scrolllock': 0x91,
+    'printscreen': 0x2C, 'prtsc': 0x2C, 'pause': 0x13, 'break': 0x13,
+    'menu': 0x5D, 'apps': 0x5D,
+    'minus': 0xBD, '-': 0xBD, 'equals': 0xBB, '=': 0xBB,
+    'lbracket': 0xDB, '[': 0xDB, 'rbracket': 0xDD, ']': 0xDD,
+    'semicolon': 0xBA, ';': 0xBA, 'quote': 0xDE, "'": 0xDE,
+    'comma': 0xBC, ',': 0xBC, 'period': 0xBE, '.': 0xBE,
+    'slash': 0xBF, '/': 0xBF, 'backquote': 0xC0, '`': 0xC0,
+    'backslash': 0xDC, '\\': 0xDC,
+    'play_pause': 0xB3, 'media_stop': 0xB2,
+    'next_track': 0xB0, 'prev_track': 0xB1,
+    'volume_up': 0xAF, 'volume_down': 0xAE,
+    'mute': 0xAD, 'volume_mute': 0xAD,
+}
+for _kb_i in range(26):
+    KEYBOARD_KEYS[chr(ord('a') + _kb_i)] = 0x41 + _kb_i
+for _kb_i in range(10):
+    KEYBOARD_KEYS[str(_kb_i)] = 0x30 + _kb_i
+for _kb_i in range(1, 25):
+    KEYBOARD_KEYS[f'f{_kb_i}'] = 0x6F + _kb_i
+del _kb_i
+
+
+def parse_keyboard_combo(keys):
+    """Parse 'ctrl+shift+s' into (modifier VK codes, key VK code)."""
+    tokens = [t.strip().lower() for t in (keys or '').split('+')]
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        raise ValueError('No keys provided')
+    if tokens == ['ctrl', 'alt', 'del'] or tokens == ['ctrl', 'alt', 'delete']:
+        raise ValueError('Ctrl+Alt+Delete cannot be simulated (blocked by Windows)')
+    *mods, last = tokens
+    for mod in mods:
+        if mod not in KEYBOARD_MODIFIERS:
+            raise ValueError(f'Unknown modifier: {mod}')
+    if last in KEYBOARD_MODIFIERS:
+        raise ValueError('Shortcut needs a non-modifier key')
+    if last not in KEYBOARD_KEYS:
+        raise ValueError(f'Unknown key: {last}')
+    return [KEYBOARD_MODIFIERS[mod] for mod in mods], KEYBOARD_KEYS[last]
+
+
+def execute_keyboard_shortcut(keys):
+    """Press a keyboard shortcut on the companion PC (Windows only, instant)."""
+    keys = (keys or '').strip()
+    if not keys:
+        return False, 'No keys provided'
+    if len(keys) > 64:
+        return False, 'Keys string too long'
+    if platform.system() != 'Windows':
+        return False, 'Keyboard shortcuts are only supported on Windows'
+    try:
+        modifiers, key_code = parse_keyboard_combo(keys)
+    except ValueError as error:
+        return False, str(error)
+
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        KEYEVENTF_KEYUP = 0x0002
+        KEYEVENTF_EXTENDEDKEY = 0x0001
+        extended = {
+            0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+            0x2C, 0x2D, 0x2E, 0x5D, 0x90,
+            0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3,
+        }
+
+        def send(vk, up):
+            flags = KEYEVENTF_KEYUP if up else 0
+            if vk in extended:
+                flags |= KEYEVENTF_EXTENDEDKEY
+            user32.keybd_event(vk, 0, flags, 0)
+
+        for mod in modifiers:
+            send(mod, False)
+            time.sleep(0.02)
+        time.sleep(0.03)
+        send(key_code, False)
+        time.sleep(0.03)
+        send(key_code, True)
+        for mod in reversed(modifiers):
+            send(mod, True)
+            time.sleep(0.02)
+        return True, f'Sent keyboard shortcut: {keys}'
+    except Exception as error:
+        log_request('ERROR', f'keyboard_shortcut: {str(error)}')
+        return False, 'Failed to send keyboard shortcut'
+
+
 def execute_open_app(app_name, args=None):
     app_name = (app_name or '').strip()
     args = args or []
@@ -699,6 +798,30 @@ def open_application():
     return jsonify({
         'success': success,
         'app': app_name,
+        'message': message if success else None,
+        'error': None if success else message
+    }), status
+
+@app.route('/api/keypress', methods=['POST'])
+@rate_limit
+def keypress():
+    """Send a keyboard shortcut (e.g. {"keys": "ctrl+c"})"""
+    data = request.json
+    if not data:
+        return jsonify({
+            'success': False,
+            'error': 'No JSON data provided'
+        }), 400
+
+    keys = (data.get('keys') or '').strip()
+
+    log_request('POST /api/keypress', f'keys={keys}')
+
+    success, message = execute_keyboard_shortcut(keys)
+    status = 200 if success else 400
+    return jsonify({
+        'success': success,
+        'keys': keys,
         'message': message if success else None,
         'error': None if success else message
     }), status
@@ -1173,6 +1296,10 @@ def execute_action():
 
         elif action_type == 'open_app':
             success, message = execute_open_app(action_config.get('app', ''), action_config.get('args', []))
+            return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
+
+        elif action_type == 'keyboard_shortcut':
+            success, message = execute_keyboard_shortcut(action_config.get('keys', ''))
             return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
 
         elif action_type == 'run_command':

@@ -23,6 +23,7 @@ class ActionsEngine {
             'navigate': this.navigate.bind(this),
             'docker_command': this.dockerCommand.bind(this),
             'obs_control': this.obsControl.bind(this),
+            'keyboard_shortcut': this.keyboardShortcut.bind(this),
             'custom_script': this.customScript.bind(this),
             'switch_profile': this.switchProfile.bind(this),
             'custom': async (action, button) => {
@@ -160,6 +161,26 @@ class ActionsEngine {
         const result = await response.json();
         if (!response.ok || !result.success) {
             throw new Error(result.error || 'OBS action failed');
+        }
+    }
+
+    async keyboardShortcut(action, button) {
+        if (!this.serverAvailable) {
+            throw new Error('Companion server required for keyboard shortcuts');
+        }
+        if (!action.keys || !action.keys.trim()) {
+            throw new Error('No keys configured for keyboard shortcut');
+        }
+
+        const response = await fetch(`${this.serverUrl}/api/keypress`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keys: action.keys })
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to send keyboard shortcut');
         }
     }
 

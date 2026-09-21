@@ -172,6 +172,7 @@ class StudioUI {
                             <option value="open_url">Open URL</option>
                             <option value="open_app">Open Application</option>
                             <option value="run_command">Run Command</option>
+                            <option value="keyboard_shortcut">Keyboard Shortcut</option>
                             <option value="obs_control">OBS Control</option>
                             <option value="copy_text">Copy Text</option>
                             <option value="http_check">HTTP Health Check</option>
@@ -715,6 +716,13 @@ class StudioUI {
                     <textarea id="action-text" class="form-control" rows="3" placeholder="Text to copy...">${this.escapeHtml(existingAction?.text || '')}</textarea>
                 </div>
             `,
+            'keyboard_shortcut': `
+                <div class="form-group">
+                    <label>Keys (e.g. ctrl+c, win+l, media_play_pause)</label>
+                    <input type="text" id="action-keys" class="form-control" placeholder="ctrl+shift+s" value="${this.attrValue(existingAction?.keys)}">
+                </div>
+                <small style="display: block; margin-top: 6px; opacity: 0.7;">Modifiers: ctrl, alt, shift, win + key (a-z, 0-9, f1-f24, enter, tab, esc, arrows, media_play_pause, volume_up...). Ctrl+Alt+Delete is blocked by Windows.</small>
+            `,
             'http_check': `
                 <div class="form-group">
                     <label>URL to Check</label>
@@ -967,6 +975,7 @@ class StudioUI {
                 return action;
             },
             'copy_text': () => ({ type: 'copy_text', text: document.getElementById('action-text').value }),
+            'keyboard_shortcut': () => ({ type: 'keyboard_shortcut', keys: document.getElementById('action-keys').value.trim() }),
             'http_check': () => ({ type: 'http_check', url: document.getElementById('action-url').value }),
             'ping': () => ({ type: 'ping', host: document.getElementById('action-host').value }),
             'docker_command': () => ({
