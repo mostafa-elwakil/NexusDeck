@@ -272,6 +272,13 @@ class ActionsEngine {
         for (let i = 0; i < steps.length; i++) {
             const step = steps[i];
 
+            // Explicit wait step
+            if (step.type === 'delay') {
+                const ms = Math.max(0, Math.min(parseInt(step.ms, 10) || 0, 10000));
+                if (ms) await this.delay(ms);
+                continue;
+            }
+
             // Execute step
             const handler = this.actionHandlers[step.type];
             if (handler) {

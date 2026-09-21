@@ -748,7 +748,7 @@ void executeButtonAction(uint8_t index) {
     }
 
     if (btn.hasWidget || btn.actionType == "widget" || btn.actionType == "custom" ||
-        btn.actionType == "navigate" || btn.actionType == "macro") {
+        btn.actionType == "navigate") {
         Serial.println("Widget/Custom action triggered on ESP32");
         setButtonState(index, 3); // Success state
         drawButton(index);

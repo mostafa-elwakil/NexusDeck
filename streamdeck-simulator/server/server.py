@@ -517,6 +517,77 @@ def execute_keyboard_shortcut(keys):
         return False, 'Failed to send keyboard shortcut'
 
 
+def execute_macro(steps):
+    """Execute a macro: ordered server-side steps with optional pauses.
+
+    Each step: {"type": <action>, ...params, "delay": <ms pause after step>}.
+    Supported step types: keyboard_shortcut, open_app, open_url, run_command,
+    copy_text, obs_control, ping, http_check, docker_command, delay.
+    """
+    if not isinstance(steps, list) or not steps:
+        return False, 'Macro has no steps'
+    if len(steps) > 20:
+        return False, 'Macro has too many steps (max 20)'
+
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            return False, f'Step {index + 1} is invalid'
+        step_type = (step.get('type') or '').strip()
+
+        if step_type == 'keyboard_shortcut':
+            ok, msg = execute_keyboard_shortcut(step.get('keys', ''))
+        elif step_type == 'open_app':
+            ok, msg = execute_open_app(step.get('app', ''), step.get('args', []))
+        elif step_type == 'open_url':
+            url = (step.get('url') or '').strip()
+            valid, err = validate_url(url)
+            if not valid:
+                return False, f'Step {index + 1} (open_url): Invalid URL: {err}'
+            import webbrowser
+            webbrowser.open(url)
+            ok, msg = True, 'Opened URL'
+        elif step_type == 'run_command':
+            ok, msg, _output = execute_run_command(
+                step.get('command', ''), step.get('shell', 'powershell'))
+        elif step_type == 'copy_text':
+            ok, msg = execute_copy_text(step.get('text', ''))
+        elif step_type == 'obs_control':
+            ok, msg = execute_obs_action({
+                **step, 'operation': step.get('operation', '')})
+        elif step_type == 'ping':
+            ok, msg, _latency = execute_ping(step.get('host', '8.8.8.8'))
+        elif step_type == 'http_check':
+            ok, msg, _status = execute_http_check(
+                step.get('url', ''), step.get('method', 'GET'))
+        elif step_type == 'docker_command':
+            ok, msg, _output = execute_docker_command(
+                step.get('dockerAction', ''), step.get('container', ''))
+        elif step_type == 'delay':
+            ok, msg = True, 'Waited'
+        else:
+            return False, f'Step {index + 1}: unsupported action type: {step_type or "missing"}'
+
+        if not ok:
+            return False, f'Step {index + 1} ({step_type}) failed: {msg}'
+
+        if index < len(steps) - 1:
+            if step_type == 'delay':
+                try:
+                    wait_ms = int(step.get('ms', 0))
+                except (TypeError, ValueError):
+                    wait_ms = 0
+            else:
+                try:
+                    wait_ms = int(step.get('delay', 0))
+                except (TypeError, ValueError):
+                    wait_ms = 0
+            wait_ms = max(0, min(wait_ms, 10000))
+            if wait_ms:
+                time.sleep(wait_ms / 1000)
+
+    return True, f'Macro executed ({len(steps)} steps)'
+
+
 def execute_open_app(app_name, args=None):
     app_name = (app_name or '').strip()
     args = args or []
@@ -1302,6 +1373,10 @@ def execute_action():
             success, message = execute_keyboard_shortcut(action_config.get('keys', ''))
             return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
 
+        elif action_type == 'macro':
+            success, message = execute_macro(action_config.get('steps', []))
+            return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
+
         elif action_type == 'run_command':
             success, message, output = execute_run_command(
                 action_config.get('command', ''),
@@ -1409,7 +1484,7 @@ def execute_action():
             success, message = execute_copy_text(action_config.get('text', ''))
             return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
 
-        elif action_type in ('custom', 'navigate', 'macro', 'widget'):
+        elif action_type in ('custom', 'navigate', 'widget'):
             return jsonify({
                 'success': False,
                 'error': f'Action type "{action_type}" can only run in the browser simulator'

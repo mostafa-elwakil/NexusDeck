@@ -12,7 +12,7 @@ A network-connected Stream Deck built around the ESP32-2432S028 CYD display and 
 - **Pomodoro timer with full control + dedicated full-screen page** — focus / short break / long break cycles, configurable durations, tap = start/pause, double-tap = reset, hold = open page (START/PAUSE, RESET, BACK); phase end triggers a **backlight blink alert**
 - **Profile switching from the ESP32** — a `Switch Profile` button cycles through all profiles (or jumps to a named one) and both screens update instantly
 - **Background color control** — per-profile background synced from the web, overridable from the ESP32 setup portal color picker
-- **Windows actions** — open URLs/apps/commands, keyboard shortcuts (Ctrl/Alt/Shift/Win combos, function/media keys), OBS Studio control (WebSocket), Docker, ping/HTTP checks, macros, custom scripts
+- **Windows actions** — open URLs/apps/commands, keyboard shortcuts (Ctrl/Alt/Shift/Win combos, function/media keys), **multi-step macros with pauses** (built in the Studio step editor, executed server-side so ESP32 buttons can run them), OBS Studio control (WebSocket), Docker, ping/HTTP checks, custom scripts
 - **Browser simulator + Studio editor** — design buttons, live widgets, and profiles; every Apply syncs to the server and the ESP32
 - **Hardened companion server** — rate limiting, CORS restricted to localhost, input validation, command-injection protection
 

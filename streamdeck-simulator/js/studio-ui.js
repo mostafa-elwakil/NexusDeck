@@ -179,6 +179,7 @@ class StudioUI {
                             <option value="ping">Ping Host</option>
                             <option value="docker_command">Docker Command</option>
                             <option value="switch_profile">Switch Profile (Cycle)</option>
+                            <option value="macro">Macro (multi-step)</option>
                             <option value="widget">Live Widget</option>
                         </select>
                     </div>
@@ -793,6 +794,14 @@ class StudioUI {
                     <input type="text" id="action-profile-name" class="form-control" placeholder="Leave empty to cycle" value="${this.attrValue(existingAction?.name)}">
                 </div>
                 <p class="text-muted" style="font-size: 12px; color: #888;">If empty, it cycles through all profiles.</p>
+            `,
+            'macro': `
+                <div class="form-group">
+                    <label>Steps (run in order)</label>
+                    <div id="macro-steps-list"></div>
+                    <button id="btn-macro-add-step" class="btn btn-secondary" type="button" style="width: 100%; margin-top: 6px;">+ Add step</button>
+                </div>
+                <small style="display: block; margin-top: 6px; opacity: 0.7;">Each step: type + value (keys / app / url / command / text / ms for delay) + optional pause after it.</small>
             `
         };
 
@@ -802,6 +811,10 @@ class StudioUI {
 
         if (actionType === 'widget') {
             this.setupWidgetConfig();
+        }
+
+        if (actionType === 'macro') {
+            this.setupMacroConfig(existingAction);
         }
 
         if (actionType === 'obs_control') {
@@ -833,6 +846,43 @@ class StudioUI {
             sessionsBeforeLong: Math.max(1, Math.round(num('action-pomo-sessions', 4))),
             autoStart: document.getElementById('action-pomo-autostart')?.checked === true
         };
+    }
+
+    setupMacroConfig(existingAction = null) {
+        const list = document.getElementById('macro-steps-list');
+        const addBtn = document.getElementById('btn-macro-add-step');
+        if (!list || !addBtn) return;
+
+        const steps = Array.isArray(existingAction?.steps) ? existingAction.steps : [];
+        list.innerHTML = '';
+        steps.forEach((step) => this.addMacroStepRow(list, step));
+        if (steps.length === 0) {
+            this.addMacroStepRow(list, {});
+        }
+
+        addBtn.addEventListener('click', () => this.addMacroStepRow(list, {}));
+    }
+
+    addMacroStepRow(list, step = {}) {
+        const row = document.createElement('div');
+        row.className = 'macro-step';
+        row.style.cssText = 'display: flex; gap: 6px; margin-bottom: 6px;';
+        const type = step.type || 'keyboard_shortcut';
+        row.innerHTML = `
+            <select class="macro-step-type form-control">
+                <option value="keyboard_shortcut" ${type === 'keyboard_shortcut' ? 'selected' : ''}>Keys</option>
+                <option value="open_app" ${type === 'open_app' ? 'selected' : ''}>Open app</option>
+                <option value="open_url" ${type === 'open_url' ? 'selected' : ''}>Open URL</option>
+                <option value="run_command" ${type === 'run_command' ? 'selected' : ''}>Command</option>
+                <option value="copy_text" ${type === 'copy_text' ? 'selected' : ''}>Copy text</option>
+                <option value="delay" ${type === 'delay' ? 'selected' : ''}>Wait</option>
+            </select>
+            <input class="macro-step-value form-control" placeholder="keys / app / url…" value="${this.attrValue(step.keys ?? step.app ?? step.url ?? step.command ?? step.text ?? step.ms ?? '')}">
+            <input class="macro-step-delay form-control" type="number" min="0" max="10000" placeholder="pause ms" style="max-width: 84px;" value="${this.attrValue(step.delay ?? '')}">
+            <button class="macro-step-remove btn btn-secondary" type="button">✕</button>
+        `;
+        row.querySelector('.macro-step-remove').addEventListener('click', () => row.remove());
+        list.appendChild(row);
     }
 
     setupObsConfig(existingAction = null) {
@@ -983,7 +1033,25 @@ class StudioUI {
                 dockerAction: document.getElementById('action-docker-action').value,
                 container: document.getElementById('action-container').value
             }),
-            'switch_profile': () => ({ type: 'switch_profile', name: document.getElementById('action-profile-name').value })
+            'switch_profile': () => ({ type: 'switch_profile', name: document.getElementById('action-profile-name').value }),
+            'macro': () => {
+                const steps = [];
+                document.querySelectorAll('#macro-steps-list .macro-step').forEach((row) => {
+                    const type = row.querySelector('.macro-step-type').value;
+                    const value = row.querySelector('.macro-step-value').value.trim();
+                    const delay = parseInt(row.querySelector('.macro-step-delay').value, 10) || 0;
+                    const step = { type };
+                    if (type === 'keyboard_shortcut') step.keys = value;
+                    else if (type === 'open_app') step.app = value;
+                    else if (type === 'open_url') step.url = value;
+                    else if (type === 'run_command') step.command = value;
+                    else if (type === 'copy_text') step.text = value;
+                    else if (type === 'delay') step.ms = parseInt(value, 10) || 0;
+                    if (delay > 0 && type !== 'delay') step.delay = Math.min(delay, 10000);
+                    if (type && (value || type === 'delay')) steps.push(step);
+                });
+                return { type: 'macro', steps };
+            }
         };
 
         return actions[actionType] ? actions[actionType]() : null;
