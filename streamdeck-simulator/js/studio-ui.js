@@ -1412,6 +1412,10 @@ class StudioUI {
         listContainer.innerHTML = '';
 
         const profiles = this.profiles.getAllProfiles();
+        if (!profiles.length) {
+            listContainer.innerHTML = '<p class="history-empty">No profiles yet. Click "+ New Profile".</p>';
+            return;
+        }
         profiles.forEach(profile => {
             const item = document.createElement('div');
             item.className = 'profile-item';

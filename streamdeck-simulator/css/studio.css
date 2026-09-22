@@ -154,6 +154,10 @@ body.theme-light .toolbar-btn:hover {
     background: #e5edf5;
 }
 
+body.theme-light .profile-item {
+    background: #eef3f8;
+}
+
 body.theme-light .btn-secondary,
 body.theme-light .btn-icon,
 body.theme-light .preset-template-btn,
@@ -499,6 +503,18 @@ textarea.form-control {
     padding: 12px;
 }
 
+/* The profiles panel now holds the long home-settings section too,
+   so the whole panel scrolls instead of squeezing the profile list */
+.profiles-panel .panel-content {
+    overflow-y: auto;
+}
+
+.profiles-panel #profiles-list {
+    flex: none;
+    overflow: visible;
+    min-height: 120px;
+}
+
 .profile-item {
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--line);
@@ -528,6 +544,7 @@ textarea.form-control {
     font-size: 14px;
     font-weight: 600;
     margin-bottom: 4px;
+    color: var(--ink);
 }
 
 .profile-meta {
@@ -770,18 +787,21 @@ body.history-open .action-history-panel {
 }
 
 .inspector-content::-webkit-scrollbar,
-.profiles-list::-webkit-scrollbar {
+.profiles-list::-webkit-scrollbar,
+.panel-content::-webkit-scrollbar {
     width: 8px;
 }
 
 .inspector-content::-webkit-scrollbar-track,
-.profiles-list::-webkit-scrollbar-track {
+.profiles-list::-webkit-scrollbar-track,
+.panel-content::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .inspector-content::-webkit-scrollbar-thumb,
-.profiles-list::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.16);
+.profiles-list::-webkit-scrollbar-thumb,
+.panel-content::-webkit-scrollbar-thumb {
+    background: rgba(141, 151, 171, 0.45);
     border-radius: 4px;
 }
 
