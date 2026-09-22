@@ -171,6 +171,9 @@ String homePrayerName = "--";
 String homePrayerTime = "--:--";
 String homeLastClock = "";
 bool homePageDirty = true;
+bool homePomoPressActive = false;
+unsigned long homePomoPressStart = 0;
+int homePomoPressX = 0;
 unsigned long homeTimeFreshAt = 0;
 unsigned long lastHomeInfoFetch = 0;
 bool clockAnalog = true;
@@ -211,6 +214,8 @@ void handlePomoPageTouch();
 void pomoTapAction(uint8_t index);
 void pomoResetSession(uint8_t index);
 void pomoToggleRun(uint8_t index);
+void pomoToggleRunBtn(Button& btn);
+void pomoResetBtn(Button& btn);
 void triggerBacklightAlert(unsigned long durationMs);
 void updateBacklight();
 void applyBacklight(bool on);
@@ -223,6 +228,7 @@ void closeHomeToGrid();
 void drawHomePage();
 void updateHomeClock();
 void updateHomePomoButton();
+void pomoAdjustMinutes(int deltaMin);
 void handleHomeTouch();
 void fetchHomeInfo(bool force);
 void fetchProfileNames();
@@ -400,6 +406,32 @@ void loop() {
             millis() - lastHomePomoDraw >= 500) {
             lastHomePomoDraw = millis();
             updateHomePomoButton();
+        }
+        // Home pomodoro press resolution: release = -/+1 min or
+        // start-pause (double-tap = reset), hold 900ms = full page
+        if (homePomoPressActive) {
+            if (!touch.touched()) {
+                homePomoPressActive = false;
+                int px = homePomoPressX;
+                unsigned long now = millis();
+                if (px < HOME_POMO_X + 32) {
+                    pomoAdjustMinutes(-1);
+                } else if (px > HOME_POMO_X + HOME_POMO_W - 32) {
+                    pomoAdjustMinutes(1);
+                } else if (now - homePomo.pomoLastTap < 600) {
+                    homePomo.pomoLastTap = 0;
+                    pomoResetBtn(homePomo);
+                    Serial.println("Home pomodoro reset");
+                } else {
+                    homePomo.pomoLastTap = now;
+                    pomoToggleRunBtn(homePomo);
+                }
+                updateHomePomoButton();
+            } else if (millis() - homePomoPressStart > 900) {
+                homePomoPressActive = false;
+                pomoReturnHome = true;
+                openPomoPage(255);
+            }
         }
     }
 
@@ -1662,26 +1694,42 @@ void drawHomePage() {
     updateHomePomoButton();
 }
 
+void pomoAdjustMinutes(int deltaMin) {
+    // Adjust home pomodoro time from the screen (± minutes, 1..180).
+    // Applies to the remaining time and sticks as the current phase duration.
+    int nv = homePomo.timerRemaining + deltaMin * 60;
+    if (nv < 60) nv = 60;
+    if (nv > 180 * 60) nv = 180 * 60;
+    homePomo.timerRemaining = nv;
+    if (homePomo.pomoPhase == 0) homePomo.pomoWorkSec = nv;
+    else if (homePomo.pomoPhase == 1) homePomo.pomoShortSec = nv;
+    else homePomo.pomoLongSec = nv;
+    homePomo.timerLastTick = millis();
+    Serial.printf("Home pomodoro duration: %d sec\n", nv);
+}
+
 void updateHomePomoButton() {
-    // Partial redraw of the home pomodoro button only: live MM:SS countdown
-    // plus phase line, so the timer stays visible without full-screen flicker
+    // Partial redraw of the home pomodoro button only, no icon:
+    // [-] zone | live MM:SS countdown + phase line | [+] zone
     const uint16_t bg = tft.color565(90, 30, 30);
     tft.fillRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, bg);
     tft.drawRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, TFT_WHITE);
-    int cx = HOME_POMO_X + 26, cy = HOME_POMO_Y + HOME_POMO_H / 2;
-    tft.fillCircle(cx, cy, 11, TFT_RED);
-    tft.fillTriangle(cx - 3, cy - 10, cx + 8, cy - 12, cx + 3, cy - 4, TFT_GREEN);
+    int cx = HOME_POMO_X + HOME_POMO_W / 2, cy = HOME_POMO_Y + HOME_POMO_H / 2;
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_LIGHTGREY, bg);
+    tft.drawString("-", HOME_POMO_X + 16, cy, 4);
+    tft.drawString("+", HOME_POMO_X + HOME_POMO_W - 16, cy, 4);
     char buf[8];
     snprintf(buf, sizeof(buf), "%02d:%02d",
              homePomo.timerRemaining / 60, homePomo.timerRemaining % 60);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, bg);
-    tft.drawString(String(buf), HOME_POMO_X + 92, cy - 9, 4);
+    tft.drawString(String(buf), HOME_POMO_X + 76, cy - 9, 4);
     const char* phase = homePomo.pomoPhase == 0 ? "FOCUS"
         : (homePomo.pomoPhase == 1 ? "SHORT BREAK" : "LONG BREAK");
     tft.setTextColor(homePomo.pomoAlert ? TFT_YELLOW
         : (homePomo.timerRunning ? TFT_GREEN : TFT_LIGHTGREY), bg);
-    tft.drawString(homePomo.pomoAlert ? "DONE!" : phase, HOME_POMO_X + 92, cy + 19, 1);
+    tft.drawString(homePomo.pomoAlert ? "DONE!" : phase, HOME_POMO_X + 76, cy + 19, 1);
 }
 
 void switchToHomeProfile(uint8_t slot) {
@@ -1738,14 +1786,17 @@ void handleHomeTouch() {
         return;
     }
 
-    // Bottom row: profile 4 (left), pomodoro (center), profile 2 (right)
+    // Bottom row: profile 4 (left), pomodoro (center), profile 2 (right).
+    // Pomodoro press is resolved in loop(): release = -/+1 min or
+    // start-pause (double-tap = reset), hold = full pomodoro page.
     if (x < 84) {
         switchToHomeProfile(3);
     } else if (x > 236) {
         switchToHomeProfile(1);
-    } else {
-        pomoReturnHome = true;
-        openPomoPage(255); // standalone home pomodoro
+    } else if (!homePomoPressActive) {
+        homePomoPressActive = true;
+        homePomoPressStart = millis();
+        homePomoPressX = x;
     }
 }
 
