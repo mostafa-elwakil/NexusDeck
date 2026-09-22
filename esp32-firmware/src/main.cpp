@@ -80,6 +80,12 @@ const int SYNC_INTERVAL = 3000; // Sync every 3 seconds to reduce display/power 
 #define BUTTON_WIDTH ((SCREEN_WIDTH - (BUTTON_PADDING * (GRID_COLS + 1))) / GRID_COLS)
 #define BUTTON_HEIGHT ((GRID_HEIGHT - (BUTTON_PADDING * (GRID_ROWS + 1))) / GRID_ROWS)
 
+// Home page pomodoro button geometry (shared by full + partial redraw)
+#define HOME_POMO_X 84
+#define HOME_POMO_Y 128
+#define HOME_POMO_W 152
+#define HOME_POMO_H 76
+
 // ===== Objects =====
 TFT_eSPI tft = TFT_eSPI();
 XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
@@ -216,6 +222,7 @@ void openHomePage();
 void closeHomeToGrid();
 void drawHomePage();
 void updateHomeClock();
+void updateHomePomoButton();
 void handleHomeTouch();
 void fetchHomeInfo(bool force);
 void fetchProfileNames();
@@ -1649,17 +1656,32 @@ void drawHomePage() {
     tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
     tft.drawString("CLOCK", 160, 98, 1);
 
-    // Bottom row: profile 4 | pomodoro (wide) | profile 2
+    // Bottom row: profile 4 | pomodoro (wide, live countdown) | profile 2
     drawHomeProfileButton(8, 128, 64, 76, homeShortName(3));
     drawHomeProfileButton(248, 128, 64, 76, homeShortName(1));
-    int px = 84, pw = 152, py = 128, ph = 76;
-    tft.fillRoundRect(px, py, pw, ph, 8, tft.color565(90, 30, 30));
-    tft.drawRoundRect(px, py, pw, ph, 8, TFT_WHITE);
-    tft.fillCircle(px + 26, py + ph / 2, 11, TFT_RED);
-    tft.fillTriangle(px + 23, py + ph / 2 - 10, px + 34, py + ph / 2 - 12, px + 29, py + ph / 2 - 4, TFT_GREEN);
+    updateHomePomoButton();
+}
+
+void updateHomePomoButton() {
+    // Partial redraw of the home pomodoro button only: live MM:SS countdown
+    // plus phase line, so the timer stays visible without full-screen flicker
+    const uint16_t bg = tft.color565(90, 30, 30);
+    tft.fillRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, bg);
+    tft.drawRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, TFT_WHITE);
+    int cx = HOME_POMO_X + 26, cy = HOME_POMO_Y + HOME_POMO_H / 2;
+    tft.fillCircle(cx, cy, 11, TFT_RED);
+    tft.fillTriangle(cx - 3, cy - 10, cx + 8, cy - 12, cx + 3, cy - 4, TFT_GREEN);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02d:%02d",
+             homePomo.timerRemaining / 60, homePomo.timerRemaining % 60);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_WHITE, tft.color565(90, 30, 30));
-    tft.drawString("POMODORO", px + 88, py + ph / 2, 2);
+    tft.setTextColor(TFT_WHITE, bg);
+    tft.drawString(String(buf), HOME_POMO_X + 92, cy - 9, 4);
+    const char* phase = homePomo.pomoPhase == 0 ? "FOCUS"
+        : (homePomo.pomoPhase == 1 ? "SHORT BREAK" : "LONG BREAK");
+    tft.setTextColor(homePomo.pomoAlert ? TFT_YELLOW
+        : (homePomo.timerRunning ? TFT_GREEN : TFT_LIGHTGREY), bg);
+    tft.drawString(homePomo.pomoAlert ? "DONE!" : phase, HOME_POMO_X + 92, cy + 19, 1);
 }
 
 void switchToHomeProfile(uint8_t slot) {
