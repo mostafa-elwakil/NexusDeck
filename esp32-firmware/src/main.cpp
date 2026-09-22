@@ -387,6 +387,13 @@ void loop() {
             homeLastClock = hm;
             updateHomeClock();
         }
+        // Live pomodoro countdown: redraw only the pomo button twice a second
+        static unsigned long lastHomePomoDraw = 0;
+        if ((homePomo.timerRunning || homePomo.pomoAlert) &&
+            millis() - lastHomePomoDraw >= 500) {
+            lastHomePomoDraw = millis();
+            updateHomePomoButton();
+        }
     }
 
     // Refresh status bar periodically (CPU/RAM/profile name)
