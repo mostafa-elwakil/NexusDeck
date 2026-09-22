@@ -1,0 +1,82 @@
+{
+  "name": "Home Assistant",
+  "size": "cyd",
+  "rows": 3,
+  "cols": 4,
+  "backgroundColor": "#000000",
+  "buttons": [
+    {
+      "label": "Living Light",
+      "icon": "💡",
+      "color": "#8a6a1a",
+      "action": { "type": "home_assistant", "domain": "light", "service": "toggle", "entity_id": "light.living_room" }
+    },
+    {
+      "label": "Bedroom Light",
+      "icon": "💡",
+      "color": "#8a6a1a",
+      "action": { "type": "home_assistant", "domain": "light", "service": "toggle", "entity_id": "light.bedroom" }
+    },
+    {
+      "label": "Fan",
+      "icon": "🌀",
+      "color": "#1a5f4d",
+      "action": { "type": "home_assistant", "domain": "fan", "service": "toggle", "entity_id": "fan.living_room" }
+    },
+    {
+      "label": "TV Plug",
+      "icon": "🔌",
+      "color": "#5c4d8a",
+      "action": { "type": "home_assistant", "domain": "switch", "service": "toggle", "entity_id": "switch.tv_plug" }
+    },
+    {
+      "label": "Movie Scene",
+      "icon": "🎬",
+      "color": "#8a2d5f",
+      "action": { "type": "home_assistant", "domain": "scene", "service": "turn_on", "entity_id": "scene.movie_night" }
+    },
+    {
+      "label": "Good Night",
+      "icon": "🌙",
+      "color": "#1a2e5f",
+      "action": { "type": "home_assistant", "domain": "script", "service": "good_night", "entity_id": "script.good_night" }
+    },
+    {
+      "label": "Lock Door",
+      "icon": "🔒",
+      "color": "#5f1a1a",
+      "action": { "type": "home_assistant", "domain": "lock", "service": "lock", "entity_id": "lock.front_door" }
+    },
+    {
+      "label": "Climate",
+      "icon": "🌡️",
+      "color": "#1a5f6e",
+      "action": { "type": "home_assistant", "domain": "climate", "service": "toggle", "entity_id": "climate.living_room" }
+    },
+    {
+      "label": "Speaker",
+      "icon": "🔈",
+      "color": "#2d5f1a",
+      "action": { "type": "home_assistant", "domain": "media_player", "service": "toggle", "entity_id": "media_player.speaker" }
+    },
+    {
+      "label": "Vacuum",
+      "icon": "🤖",
+      "color": "#4d5f1a",
+      "action": { "type": "home_assistant", "domain": "vacuum", "service": "start", "entity_id": "vacuum.robot" }
+    },
+    {
+      "label": "",
+      "icon": "🕐",
+      "color": "#1a1a3e",
+      "action": null,
+      "widget": { "type": "clock" }
+    },
+    {
+      "label": "Switch Profile",
+      "icon": "🔄",
+      "color": "#5cb5f0",
+      "action": { "type": "switch_profile" }
+    }
+  ]
+}

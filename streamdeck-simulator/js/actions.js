@@ -24,6 +24,7 @@ class ActionsEngine {
             'docker_command': this.dockerCommand.bind(this),
             'obs_control': this.obsControl.bind(this),
             'keyboard_shortcut': this.keyboardShortcut.bind(this),
+            'home_assistant': this.homeAssistant.bind(this),
             'custom_script': this.customScript.bind(this),
             'switch_profile': this.switchProfile.bind(this),
             'custom': async (action, button) => {
@@ -181,6 +182,32 @@ class ActionsEngine {
         const result = await response.json();
         if (!result.success) {
             throw new Error(result.error || 'Failed to send keyboard shortcut');
+        }
+    }
+
+    async homeAssistant(action, button) {
+        if (!this.serverAvailable) {
+            throw new Error('Companion server required for Home Assistant');
+        }
+        if (!action.domain || !action.service || !action.entity_id) {
+            throw new Error('Home Assistant action needs domain, service and entity_id');
+        }
+
+        const response = await fetch(`${this.serverUrl}/api/ha-control`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                domain: action.domain,
+                service: action.service,
+                entity_id: action.entity_id,
+                data: action.data || '',
+                url: action.url || ''
+            })
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error || 'Home Assistant action failed');
         }
     }
 

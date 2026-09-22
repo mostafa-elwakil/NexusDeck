@@ -662,8 +662,26 @@ textarea.form-control {
     z-index: 1002;
 }
 
-body.studio-open .action-history-panel {
+body.history-open .action-history-panel {
     display: flex;
+}
+
+.toolbar-btn .badge {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1;
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--ink);
+}
+
+.toolbar-btn.has-error .badge {
+    background: #dc3545;
+    color: #fff;
 }
 
 .history-header {

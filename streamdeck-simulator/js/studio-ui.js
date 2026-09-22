@@ -89,6 +89,11 @@ class StudioUI {
                     <span class="icon">✕</span>
                     <span class="label">Clear</span>
                 </button>
+                <button id="btn-toggle-history" class="toolbar-btn" title="Show/hide activity">
+                    <span class="icon">≡</span>
+                    <span class="label">Activity</span>
+                    <span class="badge" id="history-badge" style="display: none;">0</span>
+                </button>
                 <button id="btn-toggle-theme" class="toolbar-btn" title="Switch to light mode" aria-label="Switch to light mode">
                     <span class="icon">☀</span>
                     <span class="label">Day</span>
@@ -173,6 +178,7 @@ class StudioUI {
                             <option value="open_app">Open Application</option>
                             <option value="run_command">Run Command</option>
                             <option value="keyboard_shortcut">Keyboard Shortcut</option>
+                            <option value="home_assistant">Home Assistant</option>
                             <option value="obs_control">OBS Control</option>
                             <option value="copy_text">Copy Text</option>
                             <option value="http_check">HTTP Health Check</option>
@@ -229,7 +235,10 @@ class StudioUI {
                     <p class="panel-kicker">Activity</p>
                     <h3>Action History</h3>
                 </div>
-                <button id="btn-clear-history" class="close-btn" title="Clear history">⌫</button>
+                <div style="display: flex; gap: 6px;">
+                    <button id="btn-clear-history" class="close-btn" title="Clear history">⌫</button>
+                    <button id="btn-close-history" class="close-btn" title="Hide panel">×</button>
+                </div>
             </div>
             <div id="action-history-list" class="action-history-list">
                 <p class="history-empty">No actions yet. Press a key to run one.</p>
@@ -359,6 +368,16 @@ class StudioUI {
         document.getElementById('btn-clear-history')?.addEventListener('click', () => {
             this.actions.clearHistory();
             this.refreshActionHistory();
+        });
+
+        document.getElementById('btn-toggle-history')?.addEventListener('click', () => {
+            const open = document.body.classList.toggle('history-open');
+            document.getElementById('btn-toggle-history')?.classList.toggle('active', open);
+        });
+
+        document.getElementById('btn-close-history')?.addEventListener('click', () => {
+            document.body.classList.remove('history-open');
+            document.getElementById('btn-toggle-history')?.classList.remove('active');
         });
 
         this.setupIconPicker();
@@ -538,10 +557,20 @@ class StudioUI {
     }
 
     refreshActionHistory() {
+        const history = this.actions.getHistory(20);
+
+        const badge = document.getElementById('history-badge');
+        if (badge) {
+            const total = this.actions.actionHistory.length;
+            badge.style.display = total ? 'inline-grid' : 'none';
+            badge.textContent = total > 99 ? '99+' : total;
+        }
+        document.getElementById('btn-toggle-history')?.classList.toggle(
+            'has-error', history.some((entry) => entry.status === 'error'));
+
         const list = document.getElementById('action-history-list');
         if (!list) return;
 
-        const history = this.actions.getHistory(20);
         if (!history.length) {
             list.innerHTML = '<p class="history-empty">No actions yet. Press a key to run one.</p>';
             return;
@@ -724,6 +753,63 @@ class StudioUI {
                 </div>
                 <small style="display: block; margin-top: 6px; opacity: 0.7;">Modifiers: ctrl, alt, shift, win + key (a-z, 0-9, f1-f24, enter, tab, esc, arrows, media_play_pause, volume_up...). Ctrl+Alt+Delete is blocked by Windows.</small>
             `,
+            'home_assistant': `
+                <div class="form-group" style="border: 1px solid var(--line); border-radius: 10px; padding: 10px;">
+                    <label>HA Server</label>
+                    <input type="text" id="action-ha-server-url" class="form-control" placeholder="http://192.168.1.50:8123" value="" style="margin-bottom: 6px;">
+                    <input type="password" id="action-ha-server-token" class="form-control" placeholder="Long-lived token (saved on server only)" value="" style="margin-bottom: 6px;">
+                    <button id="btn-ha-save-server" class="btn btn-secondary" type="button" style="width: 100%;">💾 Save server settings</button>
+                    <div id="ha-server-result" style="margin-top: 6px; font-size: 12px; line-height: 1.4;"></div>
+                </div>
+                <div class="form-group">
+                    <label>Devices (pick to fill Entity ID)</label>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="btn-ha-load-devices" class="btn btn-secondary" type="button" style="flex: 1;">🔄 Load devices</button>
+                    </div>
+                    <select id="action-ha-entity-select" class="form-control" style="margin-top: 6px;">
+                        <option value="">— load devices first —</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Domain</label>
+                    <select id="action-ha-domain" class="form-control">
+                        <option value="light" ${existingAction?.domain === 'light' ? 'selected' : ''}>Light</option>
+                        <option value="switch" ${existingAction?.domain === 'switch' ? 'selected' : ''}>Switch</option>
+                        <option value="script" ${existingAction?.domain === 'script' ? 'selected' : ''}>Script</option>
+                        <option value="scene" ${existingAction?.domain === 'scene' ? 'selected' : ''}>Scene</option>
+                        <option value="fan" ${existingAction?.domain === 'fan' ? 'selected' : ''}>Fan</option>
+                        <option value="cover" ${existingAction?.domain === 'cover' ? 'selected' : ''}>Cover</option>
+                        <option value="climate" ${existingAction?.domain === 'climate' ? 'selected' : ''}>Climate</option>
+                        <option value="media_player" ${existingAction?.domain === 'media_player' ? 'selected' : ''}>Media Player</option>
+                        <option value="automation" ${existingAction?.domain === 'automation' ? 'selected' : ''}>Automation</option>
+                        <option value="input_boolean" ${existingAction?.domain === 'input_boolean' ? 'selected' : ''}>Input Boolean</option>
+                        <option value="lock" ${existingAction?.domain === 'lock' ? 'selected' : ''}>Lock</option>
+                        <option value="vacuum" ${existingAction?.domain === 'vacuum' ? 'selected' : ''}>Vacuum</option>
+                        <option value="homeassistant" ${existingAction?.domain === 'homeassistant' ? 'selected' : ''}>Home Assistant</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Service</label>
+                    <input type="text" id="action-ha-service" class="form-control" placeholder="turn_on" value="${this.attrValue(existingAction?.service)}">
+                </div>
+                <div class="form-group">
+                    <label>Entity ID</label>
+                    <input type="text" id="action-ha-entity" class="form-control" placeholder="light.bedroom" value="${this.attrValue(existingAction?.entity_id)}">
+                </div>
+                <div class="form-group">
+                    <label>Service Data (JSON, optional)</label>
+                    <input type="text" id="action-ha-data" class="form-control" placeholder='{"brightness": 128}' value="${this.attrValue(existingAction?.data)}">
+                </div>
+                <div class="form-group">
+                    <label>HA URL override (optional)</label>
+                    <input type="text" id="action-ha-url" class="form-control" placeholder="Default from server env" value="${this.attrValue(existingAction?.url)}">
+                </div>
+                <div class="form-group">
+                    <button id="btn-ha-test" class="btn btn-secondary" type="button" style="width: 100%;">🔌 Test HA Connection</button>
+                    <div id="ha-test-result" style="margin-top: 6px; font-size: 12px; line-height: 1.4;"></div>
+                    <small style="display: block; margin-top: 6px; opacity: 0.7;">Set HA_URL and HA_TOKEN on the server PC (HA → profile → Security → Long-lived access tokens). The token is never stored in profiles.</small>
+                </div>
+            `,
             'http_check': `
                 <div class="form-group">
                     <label>URL to Check</label>
@@ -817,6 +903,10 @@ class StudioUI {
             this.setupMacroConfig(existingAction);
         }
 
+        if (actionType === 'home_assistant') {
+            this.setupHaConfig(existingAction);
+        }
+
         if (actionType === 'obs_control') {
             this.setupObsConfig(existingAction);
         }
@@ -875,9 +965,10 @@ class StudioUI {
                 <option value="open_url" ${type === 'open_url' ? 'selected' : ''}>Open URL</option>
                 <option value="run_command" ${type === 'run_command' ? 'selected' : ''}>Command</option>
                 <option value="copy_text" ${type === 'copy_text' ? 'selected' : ''}>Copy text</option>
+                <option value="home_assistant" ${type === 'home_assistant' ? 'selected' : ''}>Home Asst</option>
                 <option value="delay" ${type === 'delay' ? 'selected' : ''}>Wait</option>
             </select>
-            <input class="macro-step-value form-control" placeholder="keys / app / url…" value="${this.attrValue(step.keys ?? step.app ?? step.url ?? step.command ?? step.text ?? step.ms ?? '')}">
+            <input class="macro-step-value form-control" placeholder="keys / app / url… (HA: domain.service:entity)" value="${this.attrValue(step.keys ?? step.app ?? step.url ?? step.command ?? step.text ?? step.ms ?? (step.entity_id ? step.domain + '.' + step.service + ':' + step.entity_id : ''))}">
             <input class="macro-step-delay form-control" type="number" min="0" max="10000" placeholder="pause ms" style="max-width: 84px;" value="${this.attrValue(step.delay ?? '')}">
             <button class="macro-step-remove btn btn-secondary" type="button">✕</button>
         `;
@@ -962,6 +1053,168 @@ class StudioUI {
         }
     }
 
+    setupHaConfig() {
+        const testButton = document.getElementById('btn-ha-test');
+        if (testButton) {
+            testButton.addEventListener('click', () => this.testHaConnection());
+        }
+
+        const urlInput = document.getElementById('action-ha-server-url');
+        const tokenInput = document.getElementById('action-ha-server-token');
+        const serverResult = document.getElementById('ha-server-result');
+        const saveButton = document.getElementById('btn-ha-save-server');
+
+        fetch(`${this.actions.serverUrl}/api/settings`)
+            .then((response) => response.json())
+            .then((result) => {
+                const settings = result.settings || {};
+                if (urlInput && settings.ha_url) urlInput.value = settings.ha_url;
+                if (serverResult) {
+                    serverResult.style.color = settings.ha_token_configured ? '#28a745' : '#999';
+                    serverResult.textContent = settings.ha_token_configured
+                        ? '✅ Token saved on server'
+                        : 'No token saved yet';
+                }
+            })
+            .catch(() => {});
+
+        if (saveButton) {
+            saveButton.addEventListener('click', async () => {
+                const payload = {};
+                if (urlInput) payload.ha_url = urlInput.value.trim();
+                if (tokenInput && tokenInput.value) payload.ha_token = tokenInput.value;
+                if (serverResult) {
+                    serverResult.style.color = '#999';
+                    serverResult.textContent = '⏳ Saving…';
+                }
+                try {
+                    const response = await fetch(`${this.actions.serverUrl}/api/settings`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const result = await response.json();
+                    if (serverResult) {
+                        if (result.success) {
+                            if (tokenInput) tokenInput.value = '';
+                            serverResult.style.color = '#28a745';
+                            const saved = result.settings || {};
+                            serverResult.textContent = saved.ha_token_configured
+                                ? '✅ Saved — token stored on server'
+                                : '✅ Saved';
+                        } else {
+                            serverResult.style.color = '#dc3545';
+                            serverResult.textContent = `❌ ${result.error || 'Save failed'}`;
+                        }
+                    }
+                } catch (error) {
+                    if (serverResult) {
+                        serverResult.style.color = '#dc3545';
+                        serverResult.textContent = `❌ ${error.message}`;
+                    }
+                }
+            });
+        }
+
+        const loadButton = document.getElementById('btn-ha-load-devices');
+        const entitySelect = document.getElementById('action-ha-entity-select');
+        if (loadButton && entitySelect) {
+            const fillEntitySelect = (entities) => {
+                entitySelect.innerHTML = '<option value="">— pick a device —</option>' + entities.map((item) =>
+                    `<option value="${this.escapeHtml(item.entity_id)}">${this.escapeHtml(item.name)} (${this.escapeHtml(item.state)})</option>`
+                ).join('');
+            };
+
+            const loadEntities = async (domain) => {
+                const response = await fetch(
+                    `${this.actions.serverUrl}/api/ha-entities?domain=${encodeURIComponent(domain)}`);
+                return response.json();
+            };
+
+            loadButton.addEventListener('click', async () => {
+                entitySelect.innerHTML = '<option value="">⏳ Loading…</option>';
+                try {
+                    const domain = document.getElementById('action-ha-domain')?.value || '';
+                    let result = await loadEntities(domain);
+                    if (!result.success) {
+                        entitySelect.innerHTML = '<option value="">— failed to load —</option>';
+                        this.showToast(result.error || 'Failed to load devices', 3000);
+                        return;
+                    }
+                    let entities = result.entities || [];
+                    if (!entities.length && domain) {
+                        result = await loadEntities('');
+                        if (result.success && (result.entities || []).length) {
+                            entities = result.entities;
+                            this.showToast(`No ${domain} devices — showing all (${entities.length})`, 3000);
+                        }
+                    }
+                    if (!entities.length) {
+                        entitySelect.innerHTML = '<option value="">— no devices found —</option>';
+                        this.showToast('Home Assistant returned no entities', 3000);
+                        return;
+                    }
+                    fillEntitySelect(entities);
+                    this.showToast(`Loaded ${entities.length} devices`, 2000);
+                } catch (error) {
+                    entitySelect.innerHTML = '<option value="">— failed to load —</option>';
+                    this.showToast(error.message, 3000);
+                }
+            });
+
+            entitySelect.addEventListener('change', () => {
+                const entityId = entitySelect.value;
+                if (!entityId) return;
+                const entityInput = document.getElementById('action-ha-entity');
+                if (entityInput) entityInput.value = entityId;
+                const domainSelect = document.getElementById('action-ha-domain');
+                const prefix = entityId.split('.')[0];
+                if (domainSelect && prefix) {
+                    const match = Array.from(domainSelect.options).find((opt) => opt.value === prefix);
+                    if (match) {
+                        domainSelect.value = prefix;
+                    } else {
+                        const opt = document.createElement('option');
+                        opt.value = prefix;
+                        opt.textContent = prefix;
+                        domainSelect.appendChild(opt);
+                        domainSelect.value = prefix;
+                    }
+                }
+            });
+        }
+    }
+
+    async testHaConnection() {
+        const resultBox = document.getElementById('ha-test-result');
+        if (!resultBox) return;
+
+        const url = document.getElementById('action-ha-url')?.value.trim() || '';
+
+        resultBox.style.color = '#999';
+        resultBox.textContent = '⏳ Connecting to Home Assistant...';
+
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/ha-status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                resultBox.style.color = '#28a745';
+                resultBox.textContent = `✅ ${result.message || 'Connected'}`;
+            } else {
+                resultBox.style.color = '#dc3545';
+                resultBox.textContent = `❌ ${result.error || 'Home Assistant not reachable'}`;
+            }
+        } catch (error) {
+            resultBox.style.color = '#dc3545';
+            resultBox.textContent = `❌ ${error.message}`;
+        }
+    }
+
     applyButtonChanges() {
         if (!this.selectedButton) return;
 
@@ -1026,6 +1279,18 @@ class StudioUI {
             },
             'copy_text': () => ({ type: 'copy_text', text: document.getElementById('action-text').value }),
             'keyboard_shortcut': () => ({ type: 'keyboard_shortcut', keys: document.getElementById('action-keys').value.trim() }),
+            'home_assistant': () => {
+                const action = {
+                    type: 'home_assistant',
+                    domain: document.getElementById('action-ha-domain')?.value || 'light',
+                    service: document.getElementById('action-ha-service')?.value.trim() || '',
+                    entity_id: document.getElementById('action-ha-entity')?.value.trim() || '',
+                    url: document.getElementById('action-ha-url')?.value.trim() || ''
+                };
+                const data = document.getElementById('action-ha-data')?.value.trim() || '';
+                if (data) action.data = data;
+                return action;
+            },
             'http_check': () => ({ type: 'http_check', url: document.getElementById('action-url').value }),
             'ping': () => ({ type: 'ping', host: document.getElementById('action-host').value }),
             'docker_command': () => ({
@@ -1046,6 +1311,18 @@ class StudioUI {
                     else if (type === 'open_url') step.url = value;
                     else if (type === 'run_command') step.command = value;
                     else if (type === 'copy_text') step.text = value;
+                    else if (type === 'home_assistant') {
+                        const m = value.match(/^([a-z_]+)\.([a-z_0-9]+)\s*:\s*([a-z_]+\.[a-z0-9_]+)$/i);
+                        if (m) {
+                            step.domain = m[1].toLowerCase();
+                            step.service = m[2].toLowerCase();
+                            step.entity_id = m[3].toLowerCase();
+                        } else {
+                            step.domain = '';
+                            step.service = '';
+                            step.entity_id = value;
+                        }
+                    }
                     else if (type === 'delay') step.ms = parseInt(value, 10) || 0;
                     if (delay > 0 && type !== 'delay') step.delay = Math.min(delay, 10000);
                     if (type && (value || type === 'delay')) steps.push(step);

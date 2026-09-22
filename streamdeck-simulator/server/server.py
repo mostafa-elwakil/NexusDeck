@@ -562,6 +562,8 @@ def execute_macro(steps):
         elif step_type == 'docker_command':
             ok, msg, _output = execute_docker_command(
                 step.get('dockerAction', ''), step.get('container', ''))
+        elif step_type == 'home_assistant':
+            ok, msg = execute_home_assistant(step)
         elif step_type == 'delay':
             ok, msg = True, 'Waited'
         else:
@@ -586,6 +588,110 @@ def execute_macro(steps):
                 time.sleep(wait_ms / 1000)
 
     return True, f'Macro executed ({len(steps)} steps)'
+
+
+# ===== Home Assistant Integration =====
+# Connection comes from environment only (the token is never stored in profiles):
+#   HA_URL   e.g. http://192.168.1.50:8123
+#   HA_TOKEN Long-lived access token (HA > user profile > Security > Create token)
+
+
+def _ha_base_url(override=''):
+    base = ((override or '') or server_settings.get('ha_url', '')
+            or os.getenv('HA_URL', '')).strip().rstrip('/')
+    return base
+
+
+def _ha_headers():
+    token = (server_settings.get('ha_token', '')
+             or os.getenv('HA_TOKEN', '') or '').strip()
+    if not token:
+        return None, 'Home Assistant token not configured (enter it in Studio > Home Assistant, or set HA_TOKEN env var)'
+    return {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}, None
+
+
+def _public_settings():
+    """Server settings safe to expose to browsers (token value never leaves the server)."""
+    public = dict(server_settings)
+    public['ha_token_configured'] = bool(server_settings.get('ha_token')
+                                         or os.getenv('HA_TOKEN', ''))
+    public.pop('ha_token', None)
+    return public
+
+
+def _ha_request(method, path, payload=None, url_override='', timeout=10):
+    import requests
+    base = _ha_base_url(url_override)
+    if not base:
+        return False, None, 'Home Assistant URL not configured (set HA_URL env var or url field)'
+    headers, error = _ha_headers()
+    if error:
+        return False, None, error
+    try:
+        response = requests.request(method, base + path, json=payload, headers=headers, timeout=timeout)
+    except requests.RequestException as error:
+        return False, None, f'Cannot reach Home Assistant: {error}'
+    if response.status_code in (200, 201):
+        try:
+            return True, response.json(), None
+        except ValueError:
+            return True, {}, None
+    return False, None, f'Home Assistant error {response.status_code}: {response.text[:200]}'
+
+
+def execute_home_assistant(config):
+    """Call a Home Assistant service, e.g. light.turn_on on light.bedroom."""
+    if isinstance(config, str):
+        try:
+            config = json.loads(config) if config else {}
+        except json.JSONDecodeError:
+            return False, 'Invalid action data JSON'
+    config = config or {}
+    domain = (config.get('domain') or '').strip().lower()
+    service = (config.get('service') or '').strip().lower()
+    entity_id = (config.get('entity_id') or '').strip().lower()
+    url_override = (config.get('url') or '').strip()
+
+    if not re.match(r'^[a-z_]{1,32}$', domain):
+        return False, 'Invalid domain (e.g. light, switch, script, scene)'
+    if not re.match(r'^[a-z_0-9]{1,64}$', service):
+        return False, 'Invalid service name'
+    if not re.match(r'^[a-z_]+\.[a-z0-9_]+$', entity_id):
+        return False, 'Invalid entity_id (format: domain.name)'
+    if domain != 'homeassistant' and entity_id.split('.')[0] != domain:
+        # Auto-align: the service is called on the entity's own domain
+        # (e.g. toggle works on light./switch./fan. entities alike).
+        domain = entity_id.split('.')[0]
+
+    data = config.get('data', '')
+    if isinstance(data, str):
+        data = data.strip()
+        if data:
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                return False, 'data must be valid JSON'
+        else:
+            data = {}
+    if not isinstance(data, dict):
+        return False, 'data must be a JSON object'
+
+    payload = {'entity_id': entity_id, **data}
+    ok, _response, error = _ha_request(
+        'POST', f'/api/services/{domain}/{service}', payload, url_override)
+    if not ok:
+        return False, error
+    return True, f'{domain}.{service} -> {entity_id}'
+
+
+def ha_status_check(url_override=''):
+    """Verify Home Assistant connectivity and token validity."""
+    ok, response, error = _ha_request('GET', '/api/', None, url_override or '')
+    if not ok:
+        return False, error
+    if isinstance(response, dict) and response.get('message') == 'API running.':
+        return True, 'Connected to Home Assistant'
+    return True, 'Home Assistant reachable'
 
 
 def execute_open_app(app_name, args=None):
@@ -893,6 +999,45 @@ def keypress():
     return jsonify({
         'success': success,
         'keys': keys,
+        'message': message if success else None,
+        'error': None if success else message
+    }), status
+
+@app.route('/api/ha-control', methods=['POST'])
+@rate_limit
+def ha_control():
+    """Call a Home Assistant service (token comes from server env, never the client)"""
+    data = request.json
+    if not data:
+        return jsonify({
+            'success': False,
+            'error': 'No JSON data provided'
+        }), 400
+
+    log_request('POST /api/ha-control',
+                f'{data.get("domain")}.{data.get("service")} -> {data.get("entity_id")}')
+
+    success, message = execute_home_assistant(data)
+    status = 200 if success else 400
+    return jsonify({
+        'success': success,
+        'message': message if success else None,
+        'error': None if success else message
+    }), status
+
+@app.route('/api/ha-status', methods=['POST'])
+@rate_limit
+def ha_status():
+    """Check Home Assistant connectivity and token validity"""
+    data = request.json or {}
+    url = (data.get('url') or '').strip() if isinstance(data, dict) else ''
+
+    log_request('POST /api/ha-status')
+
+    success, message = ha_status_check(url)
+    status = 200 if success else 400
+    return jsonify({
+        'success': success,
         'message': message if success else None,
         'error': None if success else message
     }), status
@@ -1228,10 +1373,52 @@ def handle_settings():
     log_request(f'{request.method} /api/settings')
     if request.method == 'POST':
         data = request.json or {}
-        server_settings.update(data)
+        if not isinstance(data, dict):
+            return jsonify({'success': False, 'error': 'Invalid settings data'}), 400
+        allowed = {'ha_url', 'ha_token', 'server_port', 'auto_sync'}
+        for key, value in data.items():
+            if key in allowed and isinstance(value, (str, int, bool)):
+                server_settings[key] = value if not isinstance(value, str) else value.strip()
+        if not server_settings.get('ha_url'):
+            server_settings.pop('ha_url', None)
+        if not server_settings.get('ha_token'):
+            server_settings.pop('ha_token', None)
         _persist_server_settings(server_settings)
-        return jsonify({'success': True, 'settings': server_settings})
-    return jsonify({'success': True, 'settings': server_settings})
+        return jsonify({'success': True, 'settings': _public_settings()})
+    return jsonify({'success': True, 'settings': _public_settings()})
+
+
+@app.route('/api/ha-entities', methods=['GET'])
+@rate_limit
+def ha_entities():
+    """List Home Assistant entities (trimmed), optionally filtered by domain."""
+    log_request('GET /api/ha-entities')
+
+    domain = (request.args.get('domain') or '').strip().lower()
+    ok, states, error = _ha_request('GET', '/api/states', None, '', timeout=15)
+    if not ok:
+        return jsonify({'success': False, 'error': error}), 400
+    if not isinstance(states, list):
+        return jsonify({'success': False, 'error': 'Unexpected Home Assistant response'}), 502
+
+    entities = []
+    for state in states:
+        if not isinstance(state, dict):
+            continue
+        entity_id = state.get('entity_id', '')
+        if not entity_id or '.' not in entity_id:
+            continue
+        if domain and not entity_id.startswith(domain + '.'):
+            continue
+        attributes = state.get('attributes') if isinstance(state.get('attributes'), dict) else {}
+        entities.append({
+            'entity_id': entity_id,
+            'state': state.get('state', 'unknown'),
+            'name': attributes.get('friendly_name', entity_id)
+        })
+
+    entities.sort(key=lambda item: item['entity_id'])
+    return jsonify({'success': True, 'count': len(entities), 'entities': entities})
 
 
 
@@ -1375,6 +1562,10 @@ def execute_action():
 
         elif action_type == 'macro':
             success, message = execute_macro(action_config.get('steps', []))
+            return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
+
+        elif action_type == 'home_assistant':
+            success, message = execute_home_assistant(action_config)
             return jsonify({'success': success, 'message': message, 'error': None if success else message}), (200 if success else 400)
 
         elif action_type == 'run_command':
