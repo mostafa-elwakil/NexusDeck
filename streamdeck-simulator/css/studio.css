@@ -131,6 +131,7 @@
 body.theme-light .studio-toolbar,
 body.theme-light .inspector-panel,
 body.theme-light .profiles-panel,
+body.theme-light .action-history-panel,
 body.theme-light .status-pill {
     background: rgba(255, 255, 255, 0.9);
     color: #182d42;
@@ -151,6 +152,20 @@ body.theme-light .inspector-content textarea {
 
 body.theme-light .toolbar-btn:hover {
     background: #e5edf5;
+}
+
+body.theme-light .btn-secondary,
+body.theme-light .btn-icon,
+body.theme-light .preset-template-btn,
+body.theme-light .icon-preset-btn {
+    background: #e5edf5;
+}
+
+body.theme-light .btn-secondary:hover,
+body.theme-light .btn-icon:hover,
+body.theme-light .preset-template-btn:hover,
+body.theme-light .icon-preset-btn:hover {
+    background: #d7e2ee;
 }
 
 body.theme-light .toolbar-section label,
@@ -214,13 +229,17 @@ body.theme-light .inspector-content h4 {
 
 .toolbar-select,
 .inspector-content select {
-    background: #1a1a2e; /* Dark background */
-    color: #ffffff; /* White text */
-    border: 1px solid #444; /* Darker border */
+    background: var(--bg-elevated);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 8px 10px;
+    font-size: 13px;
+    cursor: pointer;
 }
 
-/* Ensure dropdown options are also readable */
-select option {
+/* Dropdown option lists follow the OS theme in day mode; force dark only at night */
+body:not(.theme-light) select option {
     background: #1a1a2e;
     color: #ffffff;
 }

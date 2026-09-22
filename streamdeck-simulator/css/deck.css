@@ -476,6 +476,17 @@ body.theme-light .deck-logo {
     transform: translateX(-50%) translateY(0);
 }
 
+body.theme-light .toast-notification,
+body.theme-light .action-notification {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: rgba(24, 45, 66, 0.12);
+    box-shadow: 0 10px 30px rgba(44, 62, 80, 0.18);
+}
+
+body.theme-light .loading-screen {
+    background: #e8eef5;
+}
+
 @media (max-width: 768px) {
     .notification-stack {
         top: calc(var(--header-h) + 8px);

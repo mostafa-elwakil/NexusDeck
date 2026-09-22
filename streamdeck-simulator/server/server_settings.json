@@ -14,7 +14,7 @@
   "show_date": true,
   "show_prayer": true,
   "show_temp": true,
-  "brightness": 50,
+  "brightness": 100,
   "home_slots": [
     "DevOps Dashboard",
     "Home Assistant",
