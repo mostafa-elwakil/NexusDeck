@@ -1375,7 +1375,10 @@ def handle_settings():
         data = request.json or {}
         if not isinstance(data, dict):
             return jsonify({'success': False, 'error': 'Invalid settings data'}), 400
-        allowed = {'ha_url', 'ha_token', 'server_port', 'auto_sync'}
+        allowed = {'ha_url', 'ha_token', 'server_port', 'auto_sync',
+                   'home_city', 'home_country', 'home_lat', 'home_lon',
+                   'prayer_method', 'clock_analog', 'show_temp',
+                   'show_prayer', 'show_date', 'brightness'}
         for key, value in data.items():
             if key in allowed and isinstance(value, (str, int, bool)):
                 server_settings[key] = value if not isinstance(value, str) else value.strip()
@@ -1386,6 +1389,138 @@ def handle_settings():
         _persist_server_settings(server_settings)
         return jsonify({'success': True, 'settings': _public_settings()})
     return jsonify({'success': True, 'settings': _public_settings()})
+
+
+# Home-page info cache: coords, (temp, ts), (key, timings, ts)
+_home_cache = {'coords': None, 'coords_for': '', 'temp': (None, 0), 'prayer': (None, None, 0)}
+
+PRAYER_ORDER = ['Fajr', 'Sunrise', 'Dhuhr', 'Asr', 'Maghrib', 'Isha']
+PRAYER_SHORT = {'Fajr': 'FAJR', 'Sunrise': 'SHURUQ', 'Dhuhr': 'DHUHR',
+                'Asr': 'ASR', 'Maghrib': 'MAGHRIB', 'Isha': 'ISHA'}
+
+
+def _home_coords():
+    """Resolve (lat, lon) from manual settings or city geocoding."""
+    try:
+        lat = float(server_settings.get('home_lat', ''))
+        lon = float(server_settings.get('home_lon', ''))
+        if -90 <= lat <= 90 and -180 <= lon <= 180 and (lat != 0 or lon != 0):
+            return lat, lon, None
+    except (TypeError, ValueError):
+        pass
+    city = (server_settings.get('home_city', '') or '').strip()
+    country = (server_settings.get('home_country', '') or '').strip()
+    if not city:
+        return None, None, 'Home city not configured (set home_city via /api/settings)'
+    key = f'{city}|{country}'.lower()
+    if _home_cache.get('coords_for') == key and _home_cache.get('coords'):
+        lat, lon = _home_cache['coords']
+        return lat, lon, None
+    import requests
+    try:
+        params = {'name': city, 'count': 1, 'language': 'en', 'format': 'json'}
+        if country:
+            params['country'] = country
+        results = requests.get(
+            'https://geocoding-api.open-meteo.com/v1/search',
+            params=params, timeout=10).json().get('results') or []
+        if not results:
+            return None, None, f'City not found: {city}'
+        lat, lon = float(results[0]['latitude']), float(results[0]['longitude'])
+    except requests.RequestException as error:
+        return None, None, f'Geocoding failed: {error}'
+    _home_cache['coords'] = (lat, lon)
+    _home_cache['coords_for'] = key
+    return lat, lon, None
+
+
+def _home_temperature(lat, lon):
+    cached, ts = _home_cache.get('temp', (None, 0))
+    if cached is not None and time.time() - ts < 600:
+        return cached, None
+    import requests
+    try:
+        current = requests.get(
+            'https://api.open-meteo.com/v1/forecast',
+            params={'latitude': lat, 'longitude': lon, 'current': 'temperature_2m'},
+            timeout=10).json().get('current', {})
+        temp = current.get('temperature_2m')
+        if temp is None:
+            return None, 'Temperature unavailable'
+    except requests.RequestException as error:
+        return None, f'Weather request failed: {error}'
+    _home_cache['temp'] = (temp, time.time())
+    return temp, None
+
+
+def _home_next_prayer():
+    city = (server_settings.get('home_city', '') or '').strip()
+    country = (server_settings.get('home_country', '') or '').strip()
+    if not city:
+        return None, None, 'Home city not configured'
+    try:
+        method = int(server_settings.get('prayer_method', 5))
+    except (TypeError, ValueError):
+        method = 5
+    if method < 0 or method > 15:
+        method = 5
+    today = datetime.now().strftime('%Y-%m-%d')
+    key = f'{city}|{country}|{method}|{today}'
+    cached = _home_cache.get('prayer')
+    if cached and cached[0] == key and time.time() - cached[2] < 21600:
+        timings = cached[1]
+    else:
+        import requests
+        try:
+            params = {'city': city, 'country': country or ' ', 'method': method}
+            timings = requests.get(
+                'https://api.aladhan.com/v1/timingsByCity',
+                params=params, timeout=10).json().get('data', {}).get('timings')
+            if not timings:
+                return None, None, 'Prayer timings unavailable'
+        except requests.RequestException as error:
+            return None, None, f'Prayer request failed: {error}'
+        _home_cache['prayer'] = (key, timings, time.time())
+    now = datetime.now().strftime('%H:%M')
+    for name in PRAYER_ORDER:
+        moment = (timings.get(name) or '')[:5]
+        if len(moment) == 5 and moment >= now:
+            return PRAYER_SHORT[name], moment, None
+    moment = (timings.get('Fajr') or '')[:5] or '--:--'
+    return 'FAJR', moment, None
+
+
+@app.route('/api/home-info', methods=['GET'])
+def home_info():
+    """Aggregated ESP32 home-page data: server time/date, outside temp, next prayer."""
+    log_request('GET /api/home-info')
+    now = datetime.now()
+    lat, lon, geo_error = _home_coords()
+    temp, temp_error = (None, geo_error)
+    if lat is not None:
+        temp, temp_error = _home_temperature(lat, lon)
+    prayer_name, prayer_time, prayer_error = _home_next_prayer()
+    try:
+        brightness = int(server_settings.get('brightness', 100))
+    except (TypeError, ValueError):
+        brightness = 100
+    brightness = max(10, min(brightness, 100))
+    return jsonify({
+        'success': True,
+        'time': now.strftime('%H:%M:%S'),
+        'date': now.strftime('%a %d %b').upper(),
+        'temp_c': temp,
+        'temp_error': temp_error,
+        'next_prayer': prayer_name,
+        'next_prayer_time': prayer_time,
+        'prayer_error': prayer_error,
+        'city': (server_settings.get('home_city', '') or ''),
+        'clock_analog': bool(server_settings.get('clock_analog', True)),
+        'show_temp': bool(server_settings.get('show_temp', True)),
+        'show_prayer': bool(server_settings.get('show_prayer', True)),
+        'show_date': bool(server_settings.get('show_date', True)),
+        'brightness': brightness
+    })
 
 
 @app.route('/api/ha-entities', methods=['GET'])
@@ -1509,6 +1644,36 @@ def set_esp_ip():
     return jsonify({'success': True})
 
 
+def _list_all_profiles():
+    """Ordered profile list: current profile first (if not a preset file), then presets sorted by filename."""
+    presets_dir = os.path.join(SIMULATOR_DIR, 'presets')
+    preset_files = sorted([f for f in os.listdir(presets_dir) if f.endswith('.json')]) if os.path.exists(presets_dir) else []
+
+    all_profiles = []
+    for pf in preset_files:
+        try:
+            with open(os.path.join(presets_dir, pf), 'r', encoding='utf-8') as f:
+                all_profiles.append(json.load(f))
+        except Exception:
+            pass
+
+    if not any(p.get('name') == current_profile.get('name') for p in all_profiles):
+        all_profiles.insert(0, current_profile)
+    return all_profiles
+
+
+@app.route('/api/profiles', methods=['GET'])
+def list_profiles():
+    """Ordered profile names for the ESP32 home page (P1-P4 buttons)."""
+    log_request('GET /api/profiles')
+    profiles = _list_all_profiles()
+    return jsonify({
+        'success': True,
+        'current': current_profile.get('name', ''),
+        'profiles': [p.get('name', '') for p in profiles]
+    })
+
+
 @app.route('/api/execute-action', methods=['POST'])
 @rate_limit
 def execute_action():
@@ -1612,27 +1777,9 @@ def execute_action():
             global current_profile
             # Check if specific profile name was requested in actionData
             target_name = action_config.get('name', '').strip().lower()
-            
-            presets_dir = os.path.join(SIMULATOR_DIR, 'presets')
-            print(f"DEBUG: presets_dir={presets_dir}")
-            preset_files = sorted([f for f in os.listdir(presets_dir) if f.endswith('.json')]) if os.path.exists(presets_dir) else []
-            print(f"DEBUG: preset_files={preset_files}")
-            
-            all_profiles = []
-            for pf in preset_files:
-                pf_path = os.path.join(presets_dir, pf)
-                try:
-                    with open(pf_path, 'r', encoding='utf-8') as f:
-                        pdata = json.load(f)
-                        all_profiles.append(pdata)
-                except Exception as e:
-                    print(f"DEBUG: Error loading {pf}: {e}")
-                    pass
-            
-            # Ensure current_profile is always in the list
-            if not any(p.get('name') == current_profile.get('name') for p in all_profiles):
-                all_profiles.insert(0, current_profile)
-                
+
+            all_profiles = _list_all_profiles()
+
             new_profile = None
             if target_name:
                 # Try to find specific profile

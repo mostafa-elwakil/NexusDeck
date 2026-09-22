@@ -220,6 +220,61 @@ class StudioUI {
                 <div class="panel-actions">
                     <button id="btn-new-profile" class="btn btn-block">+ New Profile</button>
                 </div>
+                <div class="preset-section" id="home-page-section">
+                    <p class="panel-kicker">ESP32 home page</p>
+                    <div class="form-group">
+                        <label>City</label>
+                        <input type="text" id="home-city" class="form-control" placeholder="Cairo">
+                    </div>
+                    <div class="form-group">
+                        <label>Country</label>
+                        <input type="text" id="home-country" class="form-control" placeholder="Egypt">
+                    </div>
+                    <div class="form-group">
+                        <label>Prayer method</label>
+                        <select id="home-prayer-method" class="form-control">
+                            <option value="5">Egypt (General Authority)</option>
+                            <option value="4">Makkah (Umm al-Qura)</option>
+                            <option value="3">Muslim World League</option>
+                            <option value="2">ISNA North America</option>
+                            <option value="1">Karachi</option>
+                            <option value="0">Jafari / Shia</option>
+                            <option value="7">Tehran</option>
+                            <option value="8">Gulf Region</option>
+                            <option value="9">Kuwait</option>
+                            <option value="10">Qatar</option>
+                            <option value="11">Singapore</option>
+                            <option value="12">France (UOIF)</option>
+                            <option value="13">Turkey (Diyanet)</option>
+                            <option value="14">Russia</option>
+                            <option value="15">Moonsighting</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Coordinates (optional, skip geocoding)</label>
+                        <div style="display: flex; gap: 6px;">
+                            <input type="text" id="home-lat" class="form-control" placeholder="Lat">
+                            <input type="text" id="home-lon" class="form-control" placeholder="Lon">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Top bar widgets</label>
+                        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                            <label><input type="checkbox" id="home-show-date" checked> Date</label>
+                            <label><input type="checkbox" id="home-show-prayer" checked> Prayer</label>
+                            <label><input type="checkbox" id="home-show-temp" checked> Temp</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Screen brightness (<span id="home-brightness-val">100</span>%)</label>
+                        <input type="range" id="home-brightness" class="form-control" min="10" max="100" value="100">
+                    </div>
+                    <div class="panel-actions">
+                        <button id="btn-save-home" class="btn btn-block">Save home settings</button>
+                    </div>
+                    <div id="home-preview" class="history-empty" style="margin-top: 6px;">Home preview: —</div>
+                </div>
             </div>
         `;
         return panel;
@@ -353,6 +408,16 @@ class StudioUI {
                 }
             }
         });
+
+        // Home page settings (city/country/prayer method for ESP32 home screen)
+        document.getElementById('btn-save-home')?.addEventListener('click', () => {
+            this.saveHomeSettings();
+        });
+        document.getElementById('home-brightness')?.addEventListener('input', (e) => {
+            const label = document.getElementById('home-brightness-val');
+            if (label) label.textContent = e.target.value;
+        });
+        this.loadHomeSettings();
 
         this.deck.container.addEventListener('action:serverStatus', (e) => {
             this.updateServerStatus(e.detail.available);
@@ -1380,6 +1445,87 @@ class StudioUI {
 
             listContainer.appendChild(item);
         });
+    }
+
+    async loadHomeSettings() {
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/settings`);
+            const result = await response.json();
+            const settings = result.settings || {};
+            const setVal = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.value = value ?? '';
+            };
+            setVal('home-city', settings.home_city || '');
+            setVal('home-country', settings.home_country || '');
+            setVal('home-lat', settings.home_lat ?? '');
+            setVal('home-lon', settings.home_lon ?? '');
+            const method = document.getElementById('home-prayer-method');
+            if (method) method.value = String(settings.prayer_method ?? 5);
+            const setChecked = (id, value, fallback) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = value === undefined ? fallback : !!value;
+            };
+            setChecked('home-show-date', settings.show_date, true);
+            setChecked('home-show-prayer', settings.show_prayer, true);
+            setChecked('home-show-temp', settings.show_temp, true);
+            const brightness = document.getElementById('home-brightness');
+            const brightnessVal = document.getElementById('home-brightness-val');
+            if (brightness) {
+                brightness.value = settings.brightness ?? 100;
+                if (brightnessVal) brightnessVal.textContent = brightness.value;
+            }
+        } catch (error) {
+            console.warn('Failed to load home settings', error);
+        }
+        this.refreshHomePreview();
+    }
+
+    async saveHomeSettings() {
+        const val = (id) => document.getElementById(id)?.value.trim() || '';
+        const payload = {
+            home_city: val('home-city'),
+            home_country: val('home-country'),
+            home_lat: val('home-lat'),
+            home_lon: val('home-lon'),
+            prayer_method: parseInt(document.getElementById('home-prayer-method')?.value, 10) || 5,
+            show_date: document.getElementById('home-show-date')?.checked ?? true,
+            show_prayer: document.getElementById('home-show-prayer')?.checked ?? true,
+            show_temp: document.getElementById('home-show-temp')?.checked ?? true,
+            brightness: parseInt(document.getElementById('home-brightness')?.value, 10) || 100
+        };
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/settings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Save failed');
+            }
+            this.showToast('Home settings saved');
+            this.refreshHomePreview();
+        } catch (error) {
+            this.showToast(error.message, 3000);
+        }
+    }
+
+    async refreshHomePreview() {
+        const preview = document.getElementById('home-preview');
+        if (!preview) return;
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/home-info`);
+            const info = await response.json();
+            if (!info.success) {
+                throw new Error(info.error || 'Preview unavailable');
+            }
+            const temp = info.temp_c != null ? `${Math.round(info.temp_c)}C` : '--';
+            const prayer = info.next_prayer ? `${info.next_prayer} ${info.next_prayer_time || ''}`.trim() : '--';
+            preview.textContent = `Home preview: ${info.date || '--'} · ${temp} · ${prayer}`;
+        } catch (error) {
+            preview.textContent = 'Home preview: unavailable (is the server running?)';
+        }
     }
 
     showToast(message, duration = 2000) {

@@ -4,5 +4,15 @@
   "auto_sync": true,
   "devices": [],
   "ha_url": "http://192.168.100.48:8123/",
-  "ha_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI5YzgyMTZhNDExOTM0OGQ0YTkwNGI4NTQ3OGUwNzhjZCIsImlhdCI6MTc5MDA3ODQzOSwiZXhwIjoyMTA1NDM4NDM5fQ.szrsmoQIlPK8IkJYrl5wdwR6HIF_6Oydr04u0_YLpz0"
+  "ha_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI5YzgyMTZhNDExOTM0OGQ0YTkwNGI4NTQ3OGUwNzhjZCIsImlhdCI6MTc5MDA3ODQzOSwiZXhwIjoyMTA1NDM4NDM5fQ.szrsmoQIlPK8IkJYrl5wdwR6HIF_6Oydr04u0_YLpz0",
+  "prayer_method": 4,
+  "home_city": "Riyadh",
+  "home_country": "KSA",
+  "home_lat": "",
+  "home_lon": "",
+  "clock_analog": false,
+  "show_date": true,
+  "show_prayer": true,
+  "show_temp": true,
+  "brightness": 50
 }

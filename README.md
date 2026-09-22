@@ -9,6 +9,7 @@ A network-connected Stream Deck built around the ESP32-2432S028 CYD display and 
 - **~1 second profile synchronization** — the ESP32 polls the server every second; changing a profile on either side syncs to the other automatically
 - **Real drawn icons** — button icons render as vector shapes on the ESP32 screen (play, clock, camera, envelope, gear, tomato, …), with text fallback for unknown icons
 - **Live widgets with real countdowns on ESP32** — timer, stopwatch, clock, uptime, CPU/RAM
+- **Home page** — boots into a main screen: top bar with outside temperature, next prayer, and date (each toggleable); big digital clock; four profile buttons labeled with the real profile names; Pomodoro button plus a back (`<`) button. Every profile grid shows a `< HOME` button in the status bar — tap it (or anywhere on the status bar, or the home clock circle) to return home
 - **Pomodoro timer with full control + dedicated full-screen page** — focus / short break / long break cycles, configurable durations, tap = start/pause, double-tap = reset, hold = open page (START/PAUSE, RESET, BACK); phase end triggers a **backlight blink alert**
 - **Profile switching from the ESP32** — a `Switch Profile` button cycles through all profiles (or jumps to a named one) and both screens update instantly
 - **Background color control** — per-profile background synced from the web, overridable from the ESP32 setup portal color picker
@@ -107,6 +108,16 @@ The CYD display uses these hardware connections:
 4. Press `Ctrl+E` for Studio mode, edit buttons, and click **Apply Changes** — the ESP32 updates within ~1 second.
 5. Touch a button on the ESP32 to execute its configured action on the companion computer.
 
+### Navigation gestures (ESP32)
+
+| Gesture | Result |
+| --- | --- |
+| Swipe left from the right screen edge | Back to the home page |
+| Tap `< HOME` (status bar) | Back to the home page |
+| Tap home clock circle | Open the button grid |
+
+Buttons now execute on release, so a swipe never triggers the button under your finger.
+
 ### Pomodoro gestures (ESP32)
 
 | Gesture | Result |
@@ -155,6 +166,8 @@ Base URL: `http://<pc-ip>:8765`
 | `/api/keypress` | POST | Send a keyboard shortcut, e.g. `{"keys": "ctrl+c"}` |
 | `/api/ha-control` | POST | Call an HA service, e.g. `{"domain":"light","service":"turn_on","entity_id":"light.bedroom"}` |
 | `/api/ha-status` | POST | Check Home Assistant connectivity and token validity |
+| `/api/profiles` | GET | Ordered profile names (P1–P4 mapping for the ESP32 home page) |
+| `/api/home-info` | GET | Home-page data: server time/date, outside temperature, next prayer |
 | `/api/run-command` | POST | Run a shell command |
 | `/api/ping` | POST | Ping a host |
 | `/api/http-proxy` | POST | Proxied HTTP check |
@@ -179,6 +192,23 @@ Persistent server files (survive restarts):
 4. A ready-made **Home Assistant** profile (lights, fan, plugs, scenes, lock, climate…) ships with the app — point its buttons at your own entity IDs via the device picker.
 
 Buttons work from the web simulator, ESP32 hardware, and inside macros.
+
+## Home Page Location Setup (Temperature + Prayer)
+
+The home page clock and date work with no configuration. For temperature and prayer times, set your city once (free APIs, no keys needed):
+
+```powershell
+Invoke-RestMethod http://localhost:8765/api/settings -Method Post `
+  -Body (@{ home_city='Cairo'; home_country='Egypt'; prayer_method=5 } | ConvertTo-Json) `
+  -ContentType 'application/json'
+```
+
+Optional keys: `home_lat` / `home_lon` (skip geocoding), `prayer_method` (0–15, default 5). The ESP32 refreshes this data every minute while the home page is open.
+
+### Home Screen Customization (Studio → Profiles → ESP32 home page)
+
+- **Top bar widgets**: toggle Date, Prayer, and Temp individually (remaining ones spread evenly).
+- **Screen brightness**: 10–100% slider ( applied instantly on the ESP32, backlight alerts still blink on top of it).
 
 ## Notes
 
