@@ -259,16 +259,15 @@ class StudioUI {
                     </div>
 
                     <div class="form-group">
-                        <label>Top bar widgets</label>
-                        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                            <label><input type="checkbox" id="home-show-date" checked> Date</label>
-                            <label><input type="checkbox" id="home-show-prayer" checked> Prayer</label>
-                            <label><input type="checkbox" id="home-show-temp" checked> Temp</label>
-                        </div>
-                    </div>
-                    <div class="form-group">
                         <label>Screen brightness (<span id="home-brightness-val">100</span>%)</label>
                         <input type="range" id="home-brightness" class="form-control" min="10" max="100" value="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Home profile buttons (slot order on ESP32)</label>
+                        <select id="home-slot-0" class="form-control home-slot" style="margin-bottom: 6px;"></select>
+                        <select id="home-slot-1" class="form-control home-slot" style="margin-bottom: 6px;"></select>
+                        <select id="home-slot-2" class="form-control home-slot" style="margin-bottom: 6px;"></select>
+                        <select id="home-slot-3" class="form-control home-slot"></select>
                     </div>
                     <div class="panel-actions">
                         <button id="btn-save-home" class="btn btn-block">Save home settings</button>
@@ -1462,23 +1461,48 @@ class StudioUI {
             setVal('home-lon', settings.home_lon ?? '');
             const method = document.getElementById('home-prayer-method');
             if (method) method.value = String(settings.prayer_method ?? 5);
-            const setChecked = (id, value, fallback) => {
-                const el = document.getElementById(id);
-                if (el) el.checked = value === undefined ? fallback : !!value;
-            };
-            setChecked('home-show-date', settings.show_date, true);
-            setChecked('home-show-prayer', settings.show_prayer, true);
-            setChecked('home-show-temp', settings.show_temp, true);
             const brightness = document.getElementById('home-brightness');
             const brightnessVal = document.getElementById('home-brightness-val');
             if (brightness) {
                 brightness.value = settings.brightness ?? 100;
                 if (brightnessVal) brightnessVal.textContent = brightness.value;
             }
+            await this.loadHomeSlots(settings.home_slots || []);
         } catch (error) {
             console.warn('Failed to load home settings', error);
         }
         this.refreshHomePreview();
+    }
+
+    async loadHomeSlots(savedSlots = []) {
+        const selects = [0, 1, 2, 3].map((i) => document.getElementById(`home-slot-${i}`));
+        if (selects.some((el) => !el)) return;
+        let names = [];
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/profiles`);
+            const result = await response.json();
+            if (result.success && Array.isArray(result.profiles)) {
+                names = result.profiles.filter((name) => name);
+            }
+        } catch (error) {
+            console.warn('Failed to load profile names', error);
+        }
+        if (!names.length) {
+            names = this.profiles.getAllProfiles().map((profile) => profile.name);
+        }
+        selects.forEach((select, i) => {
+            const current = savedSlots[i] || names[i] || '';
+            select.innerHTML = '<option value="">— auto (first profiles) —</option>' + names.map((name) =>
+                `<option value="${this.escapeHtml(name)}"${name === current ? ' selected' : ''}>${this.escapeHtml(name)}</option>`
+            ).join('');
+            if (current && !names.includes(current)) {
+                const extra = document.createElement('option');
+                extra.value = current;
+                extra.textContent = current;
+                extra.selected = true;
+                select.appendChild(extra);
+            }
+        });
     }
 
     async saveHomeSettings() {
@@ -1489,10 +1513,8 @@ class StudioUI {
             home_lat: val('home-lat'),
             home_lon: val('home-lon'),
             prayer_method: parseInt(document.getElementById('home-prayer-method')?.value, 10) || 5,
-            show_date: document.getElementById('home-show-date')?.checked ?? true,
-            show_prayer: document.getElementById('home-show-prayer')?.checked ?? true,
-            show_temp: document.getElementById('home-show-temp')?.checked ?? true,
-            brightness: parseInt(document.getElementById('home-brightness')?.value, 10) || 100
+            brightness: parseInt(document.getElementById('home-brightness')?.value, 10) || 100,
+            home_slots: [0, 1, 2, 3].map((i) => document.getElementById(`home-slot-${i}`)?.value || '')
         };
         try {
             const response = await fetch(`${this.actions.serverUrl}/api/settings`, {

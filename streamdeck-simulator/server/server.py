@@ -1378,9 +1378,13 @@ def handle_settings():
         allowed = {'ha_url', 'ha_token', 'server_port', 'auto_sync',
                    'home_city', 'home_country', 'home_lat', 'home_lon',
                    'prayer_method', 'clock_analog', 'show_temp',
-                   'show_prayer', 'show_date', 'brightness'}
+                   'show_prayer', 'show_date', 'brightness', 'home_slots'}
         for key, value in data.items():
-            if key in allowed and isinstance(value, (str, int, bool)):
+            if key == 'home_slots' and isinstance(value, list):
+                cleaned = [str(item).strip() for item in value[:4]
+                           if isinstance(item, str)]
+                server_settings[key] = cleaned
+            elif key in allowed and isinstance(value, (str, int, bool)):
                 server_settings[key] = value if not isinstance(value, str) else value.strip()
         if not server_settings.get('ha_url'):
             server_settings.pop('ha_url', None)
@@ -1667,10 +1671,24 @@ def list_profiles():
     """Ordered profile names for the ESP32 home page (P1-P4 buttons)."""
     log_request('GET /api/profiles')
     profiles = _list_all_profiles()
+    names = [p.get('name', '') for p in profiles]
+    configured = server_settings.get('home_slots', '')
+    if isinstance(configured, str):
+        try:
+            configured = json.loads(configured)
+        except ValueError:
+            configured = []
+    if not isinstance(configured, list):
+        configured = []
+    slots = []
+    for i in range(4):
+        name = configured[i].strip() if i < len(configured) and isinstance(configured[i], str) else ''
+        slots.append(name if name else (names[i] if i < len(names) else ''))
     return jsonify({
         'success': True,
         'current': current_profile.get('name', ''),
-        'profiles': [p.get('name', '') for p in profiles]
+        'profiles': names,
+        'slots': slots
     })
 
 

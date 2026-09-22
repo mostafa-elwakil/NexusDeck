@@ -215,6 +215,7 @@ void tickPomo(Button& btn, bool gridFeedback, uint8_t idx, bool& needsRedraw);
 void openHomePage();
 void closeHomeToGrid();
 void drawHomePage();
+void updateHomeClock();
 void handleHomeTouch();
 void fetchHomeInfo(bool force);
 void fetchProfileNames();
@@ -376,10 +377,15 @@ void loop() {
             fetchProfileNames();
         }
         String hm = homeClockHM();
-        if (homePageDirty || hm != homeLastClock) {
+        if (homePageDirty) {
             homeLastClock = hm;
             homePageDirty = false;
             drawHomePage();
+        } else if (hm != homeLastClock) {
+            // Minute changed: redraw only the clock text (no full-screen
+            // fill, so there is no visible flicker)
+            homeLastClock = hm;
+            updateHomeClock();
         }
     }
 
@@ -1492,10 +1498,18 @@ void fetchProfileNames() {
     h.addHeader("X-StreamDeck-Client", "esp32");
     if (h.GET() == 200) {
         DynamicJsonDocument doc(2048);
-        if (!deserializeJson(doc, h.getString()) && doc.containsKey("profiles")) {
-            JsonArray arr = doc["profiles"];
-            for (uint8_t s = 0; s < 4; s++) {
-                homeNames[s] = (s < arr.size()) ? arr[s].as<String>() : "";
+        if (!deserializeJson(doc, h.getString())) {
+            // Prefer user-configured slots, fall back to first 4 profiles
+            if (doc.containsKey("slots")) {
+                JsonArray arr = doc["slots"];
+                for (uint8_t s = 0; s < 4; s++) {
+                    homeNames[s] = (s < arr.size()) ? arr[s].as<String>() : "";
+                }
+            } else if (doc.containsKey("profiles")) {
+                JsonArray arr = doc["profiles"];
+                for (uint8_t s = 0; s < 4; s++) {
+                    homeNames[s] = (s < arr.size()) ? arr[s].as<String>() : "";
+                }
             }
             Serial.println("Profile names synced for home page");
         }
@@ -1596,72 +1610,49 @@ void drawHomeProfileButton(int x, int y, int w, int h, const String& label) {
     tft.drawString(label, x + w / 2, y + h / 2, 2);
 }
 
+void updateHomeClock() {
+    // Partial update: overwrite only the clock text area (same fixed-width
+    // "HH:MM" string, text background fills the old glyphs — no flicker)
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString(homeClockHM(), 160, 74, 4);
+}
+
 void drawHomePage() {
     tft.fillScreen(deckBackgroundColor);
     drawStatusBar();
     tft.setTextDatum(TC_DATUM);
 
-    // Top info bar: enabled widgets spread evenly (DATE | PRAYER | TEMP)
-    int barY = GRID_Y_OFFSET + 2, barH = 46;
-    struct HomeCell { const char* label; String value; uint16_t color; };
-    HomeCell cells[3];
-    int cellCount = 0;
-    if (showDate) {
-        cells[cellCount].label = "DATE";
-        cells[cellCount].value = homeDate;
-        cells[cellCount].color = TFT_WHITE;
-        cellCount++;
-    }
-    if (showPrayer) {
-        cells[cellCount].label = "PRAYER";
-        cells[cellCount].value = homePrayerName + " " + homePrayerTime;
-        cells[cellCount].color = TFT_CYAN;
-        cellCount++;
-    }
-    if (showTemp) {
-        cells[cellCount].label = "TEMP";
-        cells[cellCount].value = homeTemp;
-        cells[cellCount].color = TFT_YELLOW;
-        cellCount++;
-    }
-    if (cellCount > 0) {
-        tft.drawRoundRect(6, barY, SCREEN_WIDTH - 12, barH, 8, TFT_WHITE);
-        for (int c = 0; c < cellCount; c++) {
-            int cx = 6 + (SCREEN_WIDTH - 12) * (2 * c + 1) / (2 * cellCount);
-            tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
-            tft.drawString(cells[c].label, cx, barY + 3, 1);
-            tft.setTextColor(cells[c].color, deckBackgroundColor);
-            tft.drawString(cells[c].value, cx, barY + 18, 2);
-        }
-    }
+    // Info values only (no labels): date | prayer + time | temp
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString(homeDate, 62, 20, 2);
+    tft.setTextColor(TFT_CYAN, deckBackgroundColor);
+    tft.drawString(homePrayerName + " " + homePrayerTime, 160, 20, 2);
+    tft.setTextColor(TFT_YELLOW, deckBackgroundColor);
+    tft.drawString(homeTemp, 262, 20, 2);
 
-    // Middle row: profile 3 | clock | profile 1
-    drawHomeProfileButton(8, 76, 64, 68, homeShortName(2));
-    drawHomeProfileButton(248, 76, 64, 68, homeShortName(0));
-    tft.drawCircle(160, 110, 40, TFT_WHITE);
-    tft.drawCircle(160, 110, 37, TFT_DARKGREY);
+    // Middle row: profile 3 | clock circle | profile 1
+    drawHomeProfileButton(8, 40, 64, 76, homeShortName(2));
+    drawHomeProfileButton(248, 40, 64, 76, homeShortName(0));
+    tft.drawCircle(160, 78, 42, TFT_WHITE);
+    tft.drawCircle(160, 78, 39, TFT_DARKGREY);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, deckBackgroundColor);
-    tft.drawString(homeClockHM(), 160, 106, 4);
+    tft.drawString(homeClockHM(), 160, 74, 4);
     tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
-    tft.drawString("CLOCK", 160, 130, 1);
+    tft.drawString("CLOCK", 160, 98, 1);
 
-    // Bottom row: profile 4 | pomodoro | back | profile 2
-    drawHomeProfileButton(8, 158, 64, 62, homeShortName(3));
-    drawHomeProfileButton(248, 158, 64, 62, homeShortName(1));
-    int px = 84, pw = 100, py = 158, ph = 62;
+    // Bottom row: profile 4 | pomodoro (wide) | profile 2
+    drawHomeProfileButton(8, 128, 64, 76, homeShortName(3));
+    drawHomeProfileButton(248, 128, 64, 76, homeShortName(1));
+    int px = 84, pw = 152, py = 128, ph = 76;
     tft.fillRoundRect(px, py, pw, ph, 8, tft.color565(90, 30, 30));
     tft.drawRoundRect(px, py, pw, ph, 8, TFT_WHITE);
-    tft.fillCircle(px + 20, py + ph / 2, 10, TFT_RED);
-    tft.fillTriangle(px + 17, py + ph / 2 - 9, px + 27, py + ph / 2 - 11, px + 23, py + ph / 2 - 4, TFT_GREEN);
+    tft.fillCircle(px + 26, py + ph / 2, 11, TFT_RED);
+    tft.fillTriangle(px + 23, py + ph / 2 - 10, px + 34, py + ph / 2 - 12, px + 29, py + ph / 2 - 4, TFT_GREEN);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, tft.color565(90, 30, 30));
-    tft.drawString("POMO", px + 62, py + ph / 2, 2);
-    int bx = 188, bw = 48;
-    tft.fillRoundRect(bx, py, bw, ph, 8, tft.color565(30, 60, 90));
-    tft.drawRoundRect(bx, py, bw, ph, 8, TFT_WHITE);
-    tft.setTextColor(TFT_WHITE, tft.color565(30, 60, 90));
-    tft.drawString("<", bx + bw / 2, py + ph / 2, 4);
+    tft.drawString("POMODORO", px + 88, py + ph / 2, 2);
 }
 
 void switchToHomeProfile(uint8_t slot) {
@@ -1701,33 +1692,31 @@ void handleHomeTouch() {
     homeTouchDebounce = millis() + 300;
 
     if (y < GRID_Y_OFFSET) return; // status bar reserved
-    if (y < 70) return;            // info bar not touchable
+    if (y < 40) return;            // info strip not touchable
 
-    // Middle row: P3 (left), clock circle (center), P1 (right)
-    if (y < 152) {
+    // Middle row: profile 3 (left), clock circle (center), profile 1 (right)
+    if (y < 122) {
         if (x < 84) {
-            switchToHomeProfile(2); // P3
+            switchToHomeProfile(2);
         } else if (x > 236) {
-            switchToHomeProfile(0); // P1
+            switchToHomeProfile(0);
         } else {
-            int dx = (int)x - 160, dy = (int)y - 110;
-            if (dx * dx + dy * dy <= 42 * 42) {
+            int dx = (int)x - 160, dy = (int)y - 78;
+            if (dx * dx + dy * dy <= 44 * 44) {
                 closeHomeToGrid(); // tap clock = open grid
             }
         }
         return;
     }
 
-    // Bottom row: profile 4 (left), pomodoro (center-left), back (center-right), profile 2 (right)
+    // Bottom row: profile 4 (left), pomodoro (center), profile 2 (right)
     if (x < 84) {
-        switchToHomeProfile(3); // P4
+        switchToHomeProfile(3);
     } else if (x > 236) {
-        switchToHomeProfile(1); // P2
-    } else if (x < 186) {
+        switchToHomeProfile(1);
+    } else {
         pomoReturnHome = true;
         openPomoPage(255); // standalone home pomodoro
-    } else {
-        closeHomeToGrid(); // back button
     }
 }
 
