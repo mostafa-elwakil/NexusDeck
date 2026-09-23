@@ -1,4 +1,4 @@
-# StreamDeck Simulator - ملف التجاهل
+# StreamDeck Simulator 
 
 # Python
 __pycache__/
@@ -49,4 +49,4 @@ esp32-firmware/include/config.h
 *.tmp
 *.temp
 .cache/
-ing/
+ing
