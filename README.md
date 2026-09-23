@@ -55,9 +55,11 @@ Get the latest release from **GitHub → Releases**:
 ### Run in background (autostart at login)
 
 Click the **⚙ System** button in the web toolbar and turn on **Run in background**:
-- **Windows**: creates a Startup-folder shortcut (per-user, no admin). Turn it off to remove it.
+- **Windows**: creates a Startup-folder shortcut (per-user, no admin) that launches minimized — no console popup at logon. Turn it off to remove it.
 - **Linux**: installs a `--user` systemd service. Turn it off to remove it.
 - The **Quit** button in the same panel stops the server (relaunch it from the app menu / shortcut).
+
+> **Windows note:** the `.exe` is unsigned, so SmartScreen may show an "Unknown publisher" prompt on first run — click *More info → Run anyway*. The installer also auto-closes a running instance before updating.
 
 > Every push of a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) builds and publishes these files automatically via GitHub Actions.
 

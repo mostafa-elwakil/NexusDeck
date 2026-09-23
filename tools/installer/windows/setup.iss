@@ -22,6 +22,8 @@ OutputBaseFilename=NexusDeck-Setup-{#MyAppVersion}-windows-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=yes
+CloseApplicationsFilter=NexusDeckCompanion.exe
 UninstallDisplayName=NexusDeck
 ; Keep user profiles/settings on uninstall:
 ; profile_state.json and server_settings.json are left in {app}.
@@ -37,7 +39,7 @@ Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 Name: "{group}\Open NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"
 Name: "{group}\Uninstall NexusDeck"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"; Tasks: desktopicon
-Name: "{userstartup}\NexusDeck"; Filename: "{app}\NexusDeckCompanion.exe"; Tasks: startup
+Name: "{userstartup}\NexusDeck"; Filename: "{app}\NexusDeckCompanion.exe"; Parameters: "--minimized"; Tasks: startup
 
 [Run]
 Filename: "{app}\Run-NexusDeck.bat"; Description: "Launch NexusDeck now"; Flags: postinstall shellexec skipifsilent

@@ -1486,7 +1486,8 @@ def set_autostart_windows(enabled):
         os.makedirs(os.path.dirname(lnk), exist_ok=True)
     except Exception as error:
         return False, f'Could not access Startup folder: {error}'
-    arg_str = ' '.join(f'"{a}"' for a in args)
+    # Background launches start minimized (no console popup at logon)
+    arg_str = ' '.join(f'"{a}"' for a in list(args) + ['--minimized'])
     ps_script = (
         "$ws = New-Object -ComObject WScript.Shell; "
         f"$sc = $ws.CreateShortcut({_ps_string(lnk)}); "
@@ -2099,7 +2100,26 @@ def internal_error(error):
         'error': 'Internal server error'
     }), 500
 
+def _minimize_own_console():
+    """Minimize this process's console window (Windows, `--minimized` flag).
+
+    Used for background/autostart launches so no console window pops up.
+    Safe no-op on other platforms or on failure.
+    """
+    try:
+        if platform.system() != 'Windows':
+            return
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    except Exception:
+        pass
+
+
 if __name__ == '__main__':
+    if '--minimized' in sys.argv[1:]:
+        _minimize_own_console()
     # Make console output encoding-safe on Windows (prevents UnicodeEncodeError
     # with cp1252/cp850 consoles or redirected output when printing emojis)
     for _stream in (sys.stdout, sys.stderr):
