@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=StreamDeck
+Comment=DockOps StreamDeck Companion
+Exec=@APP_DIR@/run-streamdeck.sh
+Terminal=true
+Categories=Utility;
+StartupNotify=false

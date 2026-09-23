@@ -1,11 +1,22 @@
 DockOps StreamDeck - Companion App (no Python installation needed)
 =====================================================================
 
-QUICK START
+QUICK START (portable, no install)
   Windows: double-click Run-StreamDeck.bat
   Linux:   chmod +x run-streamdeck.sh StreamDeckCompanion && ./run-streamdeck.sh
 
   Then open http://localhost:8765/ in your browser (opens automatically).
+
+FULL INSTALL
+  Windows: run DockOps-StreamDeck-Setup-*-windows-x64.exe (per-user, no
+  admin needed). Optional: desktop icon + start automatically at logon.
+  Linux:   ./install.sh [--enable-background] [--uninstall]
+  installs to ~/.local (app menu entry + optional login service).
+
+BACKGROUND MODE
+  In the web UI, click the System (gear) button and turn on
+  "Run in background" to start automatically at login, or off to stop it.
+  Use the Quit button there to stop the server.
 
 WHAT'S INSIDE
   StreamDeckCompanion(.exe) - the companion server, web simulator UI included.

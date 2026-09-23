@@ -42,13 +42,22 @@ Get the latest release from **GitHub → Releases** (`dock-ops` repo):
 
 | File | Platform | Contents |
 | --- | --- | --- |
-| `DockOps-StreamDeck-vX.Y.Z-windows-x64.zip` | Windows 10/11 64-bit | `StreamDeckCompanion.exe` + launcher, UI built in |
-| `DockOps-StreamDeck-vX.Y.Z-linux-x64.tar.gz` | Linux 64-bit (Ubuntu 22.04+) | `StreamDeckCompanion` binary + launcher, UI built in |
+| `DockOps-StreamDeck-Setup-vX.Y.Z-windows-x64.exe` | Windows 10/11 64-bit | **Recommended installer**: per-user setup, no admin needed, optional desktop icon + start at logon |
+| `DockOps-StreamDeck-vX.Y.Z-windows-x64.zip` | Windows 10/11 64-bit | Portable: `StreamDeckCompanion.exe` + launcher, UI built in |
+| `DockOps-StreamDeck-vX.Y.Z-linux-x64.tar.gz` | Linux 64-bit (Ubuntu 22.04+) | Portable binary + launcher + `install.sh` installer |
 | `firmware-esp32-2432S028-vX.Y.Z.bin` (+ `.sha256` files) | ESP32-2432S028 (CYD) | Ready-to-flash firmware |
 
-1. Extract the archive, then run `Run-StreamDeck.bat` (Windows) or `./run-streamdeck.sh` (Linux).
+1. **Windows**: run the `Setup-*.exe` installer — or extract the zip and run `Run-StreamDeck.bat`.
+   **Linux**: extract the tarball and run `./install.sh` (add `--enable-background` to start at login, `--uninstall` to remove) — or just run `./run-streamdeck.sh` portably.
 2. Open `http://localhost:8765/` (opens automatically).
 3. Your profiles/settings are saved next to the executable and survive updates — just overwrite the old executable with the new one.
+
+### Run in background (autostart at login)
+
+Click the **⚙ System** button in the web toolbar and turn on **Run in background**:
+- **Windows**: creates a Startup-folder shortcut (per-user, no admin). Turn it off to remove it.
+- **Linux**: installs a `--user` systemd service. Turn it off to remove it.
+- The **Quit** button in the same panel stops the server (relaunch it from the app menu / shortcut).
 
 > Every push of a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) builds and publishes these files automatically via GitHub Actions.
 

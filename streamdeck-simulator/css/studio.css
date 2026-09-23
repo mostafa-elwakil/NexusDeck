@@ -132,6 +132,7 @@ body.theme-light .studio-toolbar,
 body.theme-light .inspector-panel,
 body.theme-light .profiles-panel,
 body.theme-light .action-history-panel,
+body.theme-light .system-panel,
 body.theme-light .status-pill {
     background: rgba(255, 255, 255, 0.9);
     color: #182d42;
@@ -784,6 +785,107 @@ body.history-open .action-history-panel {
     display: block;
     color: var(--danger);
     margin-top: 2px;
+}
+
+.system-panel {
+    position: fixed;
+    top: 76px;
+    right: 16px;
+    width: 300px;
+    background: rgba(16, 19, 26, 0.88);
+    backdrop-filter: blur(22px);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    display: none;
+    z-index: 1003;
+    padding: 16px;
+}
+
+body.system-open .system-panel {
+    display: block;
+}
+
+.system-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.system-row:last-child {
+    border-bottom: none;
+}
+
+.system-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.system-hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+    line-height: 1.4;
+}
+
+.system-status {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    line-height: 1.5;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switch .slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    transition: background 0.2s ease;
+}
+
+.switch .slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+
+.switch input:checked + .slider {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.switch input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+.switch input:disabled + .slider {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .inspector-content::-webkit-scrollbar,

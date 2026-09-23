@@ -61,6 +61,7 @@ class StudioUI {
         studioContainer.appendChild(this.createProfilesPanel());
         studioContainer.appendChild(this.createHistoryPanel());
         document.body.appendChild(studioContainer);
+        document.body.appendChild(this.createSystemPanel());
     }
 
     createToolbar() {
@@ -97,6 +98,10 @@ class StudioUI {
                 <button id="btn-toggle-theme" class="toolbar-btn" title="Switch to light mode" aria-label="Switch to light mode">
                     <span class="icon">☀</span>
                     <span class="label">Day</span>
+                </button>
+                <button id="btn-system" class="toolbar-btn" title="Background & system settings" aria-label="System settings">
+                    <span class="icon">⚙</span>
+                    <span class="label">System</span>
                 </button>
             </div>
             <div class="toolbar-section">
@@ -279,6 +284,68 @@ class StudioUI {
         return panel;
     }
 
+    createSystemPanel() {
+        const panel = document.createElement('div');
+        panel.id = 'system-panel';
+        panel.className = 'system-panel';
+        panel.innerHTML = `
+            <div class="history-header">
+                <div>
+                    <p class="panel-kicker">Background & system</p>
+                    <h3>System</h3>
+                </div>
+                <button id="btn-close-system" class="close-btn" title="Hide panel">×</button>
+            </div>
+            <div style="padding: 4px 16px 16px;">
+                <div class="system-row">
+                    <div>
+                        <div class="system-label">Run in background</div>
+                        <div class="system-hint" id="system-autostart-via">Start automatically at login</div>
+                    </div>
+                    <label class="switch" title="Toggle background startup">
+                        <input type="checkbox" id="system-autostart-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="system-row">
+                    <div>
+                        <div class="system-label">Companion server</div>
+                        <div class="system-hint">Stop the background server process</div>
+                    </div>
+                    <button id="btn-quit-server" class="btn btn-secondary" type="button" style="flex: none;">Quit</button>
+                </div>
+                <div class="system-status" id="system-status-line"></div>
+            </div>
+        `;
+        return panel;
+    }
+
+    async loadSystemState() {
+        const toggle = document.getElementById('system-autostart-toggle');
+        const via = document.getElementById('system-autostart-via');
+        const status = document.getElementById('system-status-line');
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/system/autostart`);
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to load system state');
+            }
+            if (toggle) {
+                toggle.checked = !!result.enabled;
+                toggle.disabled = !result.supported;
+            }
+            if (via) via.textContent = result.via || 'Start automatically at login';
+            if (status) {
+                status.textContent = result.supported
+                    ? `Background startup is ${result.enabled ? 'ON' : 'OFF'} (${result.platform})`
+                    : `Background startup not supported here: ${result.via || ''}`;
+            }
+        } catch (error) {
+            if (status) status.textContent = `System status unavailable: ${error.message}`;
+            if (toggle) toggle.disabled = true;
+        }
+    }
+
     createHistoryPanel() {
         const panel = document.createElement('div');
         panel.id = 'action-history-panel';
@@ -442,6 +509,51 @@ class StudioUI {
         document.getElementById('btn-close-history')?.addEventListener('click', () => {
             document.body.classList.remove('history-open');
             document.getElementById('btn-toggle-history')?.classList.remove('active');
+        });
+
+        document.getElementById('btn-system')?.addEventListener('click', () => {
+            const open = document.body.classList.toggle('system-open');
+            document.getElementById('btn-system')?.classList.toggle('active', open);
+            if (open) this.loadSystemState();
+        });
+
+        document.getElementById('btn-close-system')?.addEventListener('click', () => {
+            document.body.classList.remove('system-open');
+            document.getElementById('btn-system')?.classList.remove('active');
+        });
+
+        document.getElementById('system-autostart-toggle')?.addEventListener('change', async (e) => {
+            const toggle = e.target;
+            toggle.disabled = true;
+            try {
+                const response = await fetch(`${this.actions.serverUrl}/api/system/autostart`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: toggle.checked })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to update background startup');
+                }
+                this.showToast(result.message || 'Background startup updated');
+            } catch (error) {
+                toggle.checked = !toggle.checked;
+                this.showToast(error.message, 3000);
+            } finally {
+                this.loadSystemState();
+            }
+        });
+
+        document.getElementById('btn-quit-server')?.addEventListener('click', async () => {
+            if (!confirm('Stop the companion server? The simulator will go offline until you start it again.')) {
+                return;
+            }
+            try {
+                await fetch(`${this.actions.serverUrl}/api/system/exit`, { method: 'POST' });
+                this.showToast('Server stopped');
+            } catch (error) {
+                this.showToast('Server stopped');
+            }
         });
 
         this.setupIconPicker();

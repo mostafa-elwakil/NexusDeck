@@ -20,6 +20,7 @@ import sys
 import time
 import threading
 import socket  # إضافة المكتبة هنا
+import base64
 
 app = Flask(__name__)
 # CORS enabled with restrictions for security
@@ -1413,6 +1414,199 @@ def handle_settings():
         _persist_server_settings(server_settings)
         return jsonify({'success': True, 'settings': _public_settings()})
     return jsonify({'success': True, 'settings': _public_settings()})
+
+
+# ===== System: run in background (autostart at login) =====
+AUTOSTART_LNK_NAME = 'DockOps StreamDeck.lnk'
+SYSTEMD_UNIT_NAME = 'streamdeck-companion.service'
+
+
+def _server_launch_target():
+    """Executable + args used to (re)launch this server (frozen exe or dev)."""
+    if getattr(sys, 'frozen', False):
+        return os.path.abspath(sys.executable), []
+    return sys.executable, [os.path.abspath(__file__)]
+
+
+def _autostart_windows_lnk():
+    appdata = os.environ.get('APPDATA') or os.path.expanduser('~')
+    startup = os.path.join(appdata, 'Microsoft', 'Windows', 'Start Menu',
+                           'Programs', 'Startup')
+    return os.path.join(startup, AUTOSTART_LNK_NAME)
+
+
+def _run_powershell(script, timeout=20):
+    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
+    return subprocess.run(['powershell', '-NoProfile', '-EncodedCommand', encoded],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def autostart_supported():
+    system = platform.system()
+    if system == 'Windows':
+        return True, 'Windows Startup folder (runs at logon)'
+    if system == 'Linux':
+        if shutil.which('systemctl'):
+            return True, 'systemd user service (runs at login)'
+        return False, 'systemctl not found (non-systemd system?)'
+    return False, f'Unsupported platform: {system}'
+
+
+def autostart_enabled():
+    system = platform.system()
+    if system == 'Windows':
+        return os.path.exists(_autostart_windows_lnk())
+    if system == 'Linux':
+        try:
+            result = subprocess.run(
+                ['systemctl', '--user', 'is-enabled', SYSTEMD_UNIT_NAME],
+                capture_output=True, text=True, timeout=10)
+            return result.stdout.strip() == 'enabled'
+        except Exception:
+            return False
+    return False
+
+
+def _ps_string(value):
+    """PowerShell single-quoted literal (backslashes stay literal)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def set_autostart_windows(enabled):
+    lnk = _autostart_windows_lnk()
+    if not enabled:
+        try:
+            if os.path.exists(lnk):
+                os.remove(lnk)
+        except Exception as error:
+            return False, f'Could not remove startup shortcut: {error}'
+        return True, 'Removed from Windows startup'
+    exe, args = _server_launch_target()
+    try:
+        os.makedirs(os.path.dirname(lnk), exist_ok=True)
+    except Exception as error:
+        return False, f'Could not access Startup folder: {error}'
+    arg_str = ' '.join(f'"{a}"' for a in args)
+    ps_script = (
+        "$ws = New-Object -ComObject WScript.Shell; "
+        f"$sc = $ws.CreateShortcut({_ps_string(lnk)}); "
+        f"$sc.TargetPath = {_ps_string(exe)}; "
+        f"$sc.Arguments = {_ps_string(arg_str)}; "
+        f"$sc.WorkingDirectory = {_ps_string(os.path.dirname(exe))}; "
+        "$sc.Description = 'DockOps StreamDeck Companion (background)'; "
+        "$sc.Save(); Write-Output 'OK'"
+    )
+    try:
+        result = _run_powershell(ps_script)
+    except Exception as error:
+        return False, f'Shortcut creation failed: {error}'
+    if result.returncode == 0 and os.path.exists(lnk):
+        return True, 'Added to Windows startup (runs in background at logon)'
+    err = (result.stderr or '').strip()[:300]
+    return False, f'Shortcut creation failed{": " + err if err else ""}'
+
+
+def _systemd_unit_dir():
+    return os.path.join(os.path.expanduser('~'), '.config', 'systemd', 'user')
+
+
+def set_autostart_linux(enabled):
+    unit_path = os.path.join(_systemd_unit_dir(), SYSTEMD_UNIT_NAME)
+    if not enabled:
+        for cmd in (['systemctl', '--user', 'disable', SYSTEMD_UNIT_NAME],
+                    ['systemctl', '--user', 'daemon-reload']):
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=15)
+            except Exception:
+                pass
+        try:
+            if os.path.exists(unit_path):
+                os.remove(unit_path)
+        except Exception as error:
+            return False, f'Could not remove service file: {error}'
+        return True, 'Background service disabled and removed'
+    exe, args = _server_launch_target()
+    parts = [exe] + list(args)
+    exec_start = ' '.join(f'"{p}"' if ' ' in p else p for p in parts)
+    unit = (
+        '[Unit]\n'
+        'Description=DockOps StreamDeck Companion Server\n'
+        'After=network-online.target\n'
+        'Wants=network-online.target\n'
+        '\n'
+        '[Service]\n'
+        'Type=simple\n'
+        f'ExecStart={exec_start}\n'
+        'Restart=on-failure\n'
+        'RestartSec=5\n'
+        '\n'
+        '[Install]\n'
+        'WantedBy=default.target\n'
+    )
+    try:
+        os.makedirs(_systemd_unit_dir(), exist_ok=True)
+        with open(unit_path, 'w', encoding='utf-8') as f:
+            f.write(unit)
+        reload_result = subprocess.run(
+            ['systemctl', '--user', 'daemon-reload'],
+            capture_output=True, text=True, timeout=15)
+        if reload_result.returncode != 0:
+            return False, 'systemd daemon-reload failed (is a user session running?)'
+        enable_result = subprocess.run(
+            ['systemctl', '--user', 'enable', SYSTEMD_UNIT_NAME],
+            capture_output=True, text=True, timeout=15)
+        if enable_result.returncode != 0:
+            err = (enable_result.stderr or '').strip()[:300]
+            return False, f'systemctl enable failed{": " + err if err else ""}'
+    except Exception as error:
+        return False, f'Could not install service: {error}'
+    return True, 'Background service installed (starts automatically at login)'
+
+
+def set_autostart(enabled):
+    system = platform.system()
+    if system == 'Windows':
+        return set_autostart_windows(enabled)
+    if system == 'Linux':
+        return set_autostart_linux(enabled)
+    return False, f'Unsupported platform: {system}'
+
+
+@app.route('/api/system/autostart', methods=['GET', 'POST'])
+@rate_limit
+def system_autostart():
+    """Query or toggle 'run in background at login' for this computer."""
+    log_request(f'{request.method} /api/system/autostart')
+    if request.method == 'GET':
+        supported, via = autostart_supported()
+        return jsonify({
+            'success': True,
+            'supported': supported,
+            'via': via,
+            'platform': platform.system(),
+            'enabled': autostart_enabled() if supported else False
+        })
+    data = request.json or {}
+    enabled = bool(data.get('enabled', False))
+    supported, via = autostart_supported()
+    if not supported:
+        return jsonify({'success': False, 'error': via}), 400
+    success, message = set_autostart(enabled)
+    return jsonify({
+        'success': success,
+        'enabled': autostart_enabled() if success else autostart_enabled(),
+        'message': message if success else None,
+        'error': None if success else message
+    }), (200 if success else 400)
+
+
+@app.route('/api/system/exit', methods=['POST'])
+@rate_limit
+def system_exit():
+    """Shut the companion server down (local control from the web UI)."""
+    log_request('POST /api/system/exit')
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+    return jsonify({'success': True, 'message': 'Server shutting down'})
 
 
 # Home-page info cache: coords, (temp, ts), (key, timings, ts)

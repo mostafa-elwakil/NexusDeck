@@ -84,7 +84,8 @@ jobs:
           mkdir -p pkg
           cp dist/StreamDeckCompanion pkg/
           cp ../../tools/release/run-streamdeck.sh ../../tools/release/README.txt pkg/
-          chmod +x pkg/StreamDeckCompanion pkg/run-streamdeck.sh
+          cp ../../tools/installer/linux/install.sh ../../tools/installer/linux/dockops-streamdeck.desktop pkg/
+          chmod +x pkg/StreamDeckCompanion pkg/run-streamdeck.sh pkg/install.sh
           tarball="DockOps-StreamDeck-$ver-linux-x64.tar.gz"
           tar -czf "$tarball" -C pkg .
           sha256sum "$tarball" > "$tarball.sha256"
@@ -125,9 +126,46 @@ jobs:
           path: |
             firmware-esp32-*.bin*
 
+  build-installer-windows:
+    needs: [build-windows]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: staging
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+        shell: pwsh
+
+      - name: Build Setup.exe
+        run: |
+          $ver = "${{ github.ref_name }}"
+          if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
+          Expand-Archive -Path staging/DockOps-StreamDeck-*-windows-x64.zip -DestinationPath staging/pkg -Force
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe" /DMyAppVersion="$ver" /DStagingDir="staging/pkg" /O"installer-out" tools/installer/windows/setup.iss
+          $exe = Get-ChildItem installer-out/*.exe | Select-Object -First 1
+          (Get-FileHash $exe.FullName -Algorithm SHA256).Hash + "  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii
+          Get-ChildItem installer-out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-installer
+          path: |
+            installer-out/*.exe
+            installer-out/*.sha256
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-windows, build-linux, build-firmware]
+    needs: [build-windows, build-linux, build-firmware, build-installer-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
