@@ -58,7 +58,9 @@ exe = EXE(
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    # Windowed (no console window): server logs go to companion.log
+    # next to the executable instead. See server.py __main__ redirect.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

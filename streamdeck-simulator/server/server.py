@@ -2117,7 +2117,29 @@ def _minimize_own_console():
         pass
 
 
+def _redirect_output_to_log():
+    """Windowed frozen builds have no console (sys.stdout is None).
+
+    Redirect all prints to companion.log next to the executable so the
+    server never crashes on print() and logs stay inspectable.
+    Returns True when redirected.
+    """
+    try:
+        if not getattr(sys, 'frozen', False):
+            return False
+        if sys.stdout is not None and sys.stderr is not None:
+            return False
+        log_path = os.path.join(STATE_DIR, 'companion.log')
+        log_file = open(log_path, 'a', encoding='utf-8', errors='replace')
+        sys.stdout = log_file
+        sys.stderr = log_file
+        return True
+    except Exception:
+        return False
+
+
 if __name__ == '__main__':
+    _redirect_output_to_log()
     if '--minimized' in sys.argv[1:]:
         _minimize_own_console()
     # Make console output encoding-safe on Windows (prevents UnicodeEncodeError

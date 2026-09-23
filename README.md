@@ -60,6 +60,8 @@ Click the **⚙ System** button in the web toolbar and turn on **Run in backgrou
 - The **Quit** button in the same panel stops the server (relaunch it from the app menu / shortcut).
 
 > **Windows note:** the `.exe` is unsigned, so SmartScreen may show an "Unknown publisher" prompt on first run — click *More info → Run anyway*. The installer also auto-closes a running instance before updating.
+>
+> The installed/portable `.exe` shows **no console window at all** — it runs silently in the background. Server logs go to `companion.log` next to the executable. To stop it: web UI **⚙ System → Quit**, Task Manager (`NexusDeckCompanion.exe`), or `taskkill /IM NexusDeckCompanion.exe /F`.
 
 > Every push of a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) builds and publishes these files automatically via GitHub Actions.
 
