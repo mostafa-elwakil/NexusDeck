@@ -25,6 +25,8 @@ WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=NexusDeckCompanion.exe
 UninstallDisplayName=NexusDeck
+SetupIconFile=..\..\..\streamdeck-simulator\server\assets\nexusdeck.ico
+UninstallDisplayIcon={app}\NexusDeckCompanion.exe
 ; Keep user profiles/settings on uninstall:
 ; profile_state.json and server_settings.json are left in {app}.
 
