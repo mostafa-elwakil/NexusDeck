@@ -20,9 +20,12 @@ BACKGROUND MODE
 
 WHAT'S INSIDE
   NexusDeckCompanion(.exe) - the companion server, web simulator UI included.
-  Your profiles/settings are saved next to the executable
-  (profile_state.json, server_settings.json) and survive updates -
-  just copy the new executable over the old one.
+  Logs go to companion.log in the same state folder below.
+  Your profiles/settings live in ONE shared per-user folder and survive
+  updates and restarts, no matter which copy you run (installed or dev):
+    Windows: %APPDATA%\NexusDeck\  (profile_state.json, server_settings.json)
+    Linux:   ~/.local/share/nexusdeck/
+  Old copies migrate their files there automatically on first run.
 
 FIRST RUN ON ESP32
   Flash the firmware (see firmware-esp32-*.bin + PlatformIO instructions

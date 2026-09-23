@@ -61,7 +61,7 @@ Click the **⚙ System** button in the web toolbar and turn on **Run in backgrou
 
 > **Windows note:** the `.exe` is unsigned, so SmartScreen may show an "Unknown publisher" prompt on first run — click *More info → Run anyway*. The installer also auto-closes a running instance before updating.
 >
-> The installed/portable `.exe` shows **no console window at all** — it runs silently in the background. Server logs go to `companion.log` next to the executable. To stop it: web UI **⚙ System → Quit**, Task Manager (`NexusDeckCompanion.exe`), or `taskkill /IM NexusDeckCompanion.exe /F`.
+> The installed/portable `.exe` shows **no console window at all** — it runs silently in the background. Server logs go to `companion.log` in the state folder above. To stop it: web UI **⚙ System → Quit**, Task Manager (`NexusDeckCompanion.exe`), or `taskkill /IM NexusDeckCompanion.exe /F`.
 
 > Every push of a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) builds and publishes these files automatically via GitHub Actions.
 
@@ -208,11 +208,15 @@ Base URL: `http://<pc-ip>:8765`
 | `/api/obs-control` | POST | OBS WebSocket actions |
 | `/api/obs-status` | POST | OBS connectivity + recording state |
 
-Persistent server files (survive restarts):
+Persistent server files (survive restarts) — one shared folder for installed
+and dev copies, so they can never diverge (old copies migrate automatically):
 
-- `server/profile_state.json` — last active profile
-- `server/server_settings.json` — settings DB (ESP32 IP, ports, options)
+- Windows: `%APPDATA%\NexusDeck\` · Linux: `~/.local/share/nexusdeck/`
+  - `profile_state.json` — last active profile (written atomically)
+  - `server_settings.json` — settings DB (ESP32 IP, ports, options)
+  - `companion.log` — server logs (frozen builds)
 - `presets/*.json` — built-in profiles, all fixed to the 4×3 CYD layout
+- Only one server instance runs at a time (a second launch exits with a message)
 
 ## Home Assistant Setup
 

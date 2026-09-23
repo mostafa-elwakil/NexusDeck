@@ -43,11 +43,15 @@ class ProfilesManager {
             if (currentProfileName) {
                 const profile = this.getProfile(currentProfileName);
                 if (profile) {
-                    this.loadProfile(profile);
+                    this.loadProfile(profile, { push: false });
                 }
             } else if (this.profiles.length > 0) {
-                this.loadProfile(this.profiles[0]);
+                this.loadProfile(this.profiles[0], { push: false });
             }
+
+            // Converge to server truth without pushing: a stale local cache
+            // must never overwrite the server on boot.
+            this.pullServerProfile();
         } catch (error) {
             console.error('Failed to load profiles:', error);
             this.profiles = this.getDefaultProfiles();
@@ -99,7 +103,37 @@ class ProfilesManager {
         if (changed) this.saveProfiles();
     }
 
-    loadProfile(profile) {
+    async pullServerProfile() {
+        try {
+            const url = this.actions?.serverUrl;
+            if (!url) return;
+            const response = await fetch(`${url}/api/get-profile`);
+            if (!response.ok) return;
+            const serverProfile = await response.json();
+            if (!serverProfile || !serverProfile.name || !Array.isArray(serverProfile.buttons)) return;
+            const local = this.getProfile(serverProfile.name);
+            if (local && JSON.stringify(local.buttons) === JSON.stringify(serverProfile.buttons)) {
+                if (this.currentProfile?.name !== local.name) {
+                    this.loadProfile(local, { push: false });
+                }
+                return;
+            }
+            const entry = { ...serverProfile };
+            const index = this.profiles.findIndex((item) => item.name === entry.name);
+            if (index >= 0) {
+                this.profiles[index] = entry;
+            } else {
+                this.profiles.push(entry);
+            }
+            this.saveProfiles();
+            this.loadProfile(entry, { push: false });
+        } catch (error) {
+            console.warn('Server profile pull failed:', error);
+        }
+    }
+
+    loadProfile(profile, options = {}) {
+        const push = options.push !== false;
         if (typeof profile === 'string') {
             profile = this.getProfile(profile);
         }
@@ -142,7 +176,11 @@ class ProfilesManager {
         localStorage.setItem(this.currentProfileKey, profile.name);
 
         this.dispatchEvent('profileLoaded', { profile });
-        this.syncProfileToServer(profile);
+        // Only explicit user actions push to the server. Passive loads
+        // (boot, remote auto-sync) must never overwrite server state.
+        if (push) {
+            this.syncProfileToServer(profile);
+        }
         return true;
     }
 

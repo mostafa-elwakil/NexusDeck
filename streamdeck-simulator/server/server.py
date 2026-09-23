@@ -31,20 +31,55 @@ PORT = 8765
 HOST = '0.0.0.0'
 
 
+def _user_state_dir():
+    """Single shared state dir so dev runs and installed copies never diverge."""
+    if platform.system() == 'Windows':
+        base = os.environ.get('APPDATA') or os.path.expanduser('~')
+        return os.path.join(base, 'NexusDeck')
+    return os.path.join(os.path.expanduser('~'), '.local', 'share', 'nexusdeck')
+
+
+def _migrate_legacy_state(state_dir):
+    """One-time copy of state files from old per-copy locations."""
+    legacy_dirs = []
+    if getattr(sys, 'frozen', False):
+        legacy_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+    legacy_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+    for name in ('profile_state.json', 'server_settings.json'):
+        dest = os.path.join(state_dir, name)
+        if os.path.exists(dest):
+            continue
+        for legacy in legacy_dirs:
+            if os.path.abspath(legacy) == os.path.abspath(state_dir):
+                continue
+            src = os.path.join(legacy, name)
+            if os.path.exists(src):
+                try:
+                    shutil.copy2(src, dest)
+                    print(f'[STATE] migrated {name} from {legacy}')
+                except Exception as error:
+                    print(f'[STATE] migration failed for {name}: {error}')
+                break
+
+
 def _runtime_paths():
     """Resolve resource + writable-state directories (PyInstaller-aware).
 
     Frozen (PyInstaller onefile/onedir): read-only bundled web UI lives in
-    sys._MEIPASS, while user state (profiles/settings) must live next to
-    the executable so it survives restarts and stays writable.
-    Dev (python server.py): resources = repo simulator dir, state = server dir.
+    sys._MEIPASS. State (profiles/settings/logs) always lives in the shared
+    per-user dir so installed and dev copies can never diverge.
+    Dev (python server.py): resources = repo simulator dir.
     """
     if getattr(sys, 'frozen', False):
         resource_dir = sys._MEIPASS
-        state_dir = os.path.dirname(os.path.abspath(sys.executable))
     else:
         resource_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        state_dir = os.path.dirname(os.path.abspath(__file__))
+    state_dir = _user_state_dir()
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+    except Exception:
+        pass
+    _migrate_legacy_state(state_dir)
     return resource_dir, state_dir
 
 
@@ -1294,10 +1329,24 @@ def _load_server_settings():
     }
 
 
+def _atomic_write_json(path, data, indent=None):
+    """Write JSON atomically: a crash/restart mid-write can never leave a
+    truncated file behind (which would boot back into defaults)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except Exception:
+        pass
+    tmp = f'{path}.tmp.{os.getpid()}'
+    with open(tmp, 'w', encoding='utf-8') as file_handle:
+        json.dump(data, file_handle, ensure_ascii=False, indent=indent)
+        file_handle.flush()
+        os.fsync(file_handle.fileno())
+    os.replace(tmp, path)
+
+
 def _persist_server_settings(settings):
     try:
-        with open(SETTINGS_DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(SETTINGS_DB_FILE, settings, indent=2)
     except Exception as error:
         log_request('ERROR', f'persist settings: {str(error)}')
 
@@ -1340,10 +1389,9 @@ def _load_persisted_profile():
 
 
 def _persist_profile(profile):
-    """Save the current profile to disk (best-effort)."""
+    """Save the current profile to disk (best-effort, atomic)."""
     try:
-        with open(PROFILE_STATE_FILE, 'w', encoding='utf-8') as file_handle:
-            json.dump(profile, file_handle, ensure_ascii=False)
+        _atomic_write_json(PROFILE_STATE_FILE, profile)
     except Exception as error:
         log_request('ERROR', f'persist profile: {str(error)}')
 
@@ -2117,6 +2165,25 @@ def _minimize_own_console():
         pass
 
 
+_INSTANCE_LOCK = None
+
+
+def _ensure_single_instance():
+    """Exit if another server already holds the port.
+
+    Prevents stacked duplicates (autostart + manual launch) from racing
+    over the same state files.
+    """
+    global _INSTANCE_LOCK
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('127.0.0.1', PORT))
+    except OSError:
+        print(f"Another NexusDeck server is already running on port {PORT} - exiting.")
+        sys.exit(1)
+    _INSTANCE_LOCK = sock
+
+
 def _redirect_output_to_log():
     """Windowed frozen builds have no console (sys.stdout is None).
 
@@ -2169,6 +2236,8 @@ if __name__ == '__main__':
     print("=" * 70)
     print("Press Ctrl+C to stop the server")
     print("=" * 70)
+
+    _ensure_single_instance()
 
     try:
         app.run(

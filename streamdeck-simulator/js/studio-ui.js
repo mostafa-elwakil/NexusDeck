@@ -496,6 +496,10 @@ class StudioUI {
             this.refreshActionHistory();
         });
 
+        this.deck.container.addEventListener('profile:profileLoaded', () => {
+            this.refreshProfilesList();
+        });
+
         document.getElementById('btn-clear-history')?.addEventListener('click', () => {
             this.actions.clearHistory();
             this.refreshActionHistory();
@@ -642,10 +646,10 @@ class StudioUI {
             const data = await response.json();
             this.updateEsp32Status(data.esp32 || null);
 
-            // Auto-sync profile if changed on server/ESP32
+            // Auto-sync profile if changed on server/ESP32 (pull only)
             if (data.profile_name && data.profile_name !== this.profiles.currentProfile?.name) {
                 console.log('Profile change detected, syncing...');
-                this.profiles.loadProfile(data.profile_name);
+                this.profiles.loadProfile(data.profile_name, { push: false });
             }
         } catch (error) {
             this.updateEsp32Status(null);
