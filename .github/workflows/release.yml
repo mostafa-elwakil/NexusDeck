@@ -1,0 +1,142 @@
+name: Release
+
+# Publish a GitHub Release by pushing a tag, e.g.:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# Manual runs (workflow_dispatch) only build artifacts for testing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: streamdeck-simulator/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build standalone executable
+        run: pyinstaller streamdeck.spec
+
+      - name: Package release zip
+        run: |
+          $ver = "${{ github.ref_name }}"
+          if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
+          New-Item -ItemType Directory -Force -Path pkg | Out-Null
+          Copy-Item dist/StreamDeckCompanion.exe pkg/
+          Copy-Item ../../tools/release/Run-StreamDeck.bat pkg/
+          Copy-Item ../../tools/release/README.txt pkg/
+          $zip = "DockOps-StreamDeck-$ver-windows-x64.zip"
+          Compress-Archive -Path pkg/* -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash + "  $zip" | Out-File "$zip.sha256" -Encoding ascii
+          Get-ChildItem *.zip, *.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            streamdeck-simulator/server/*.zip
+            streamdeck-simulator/server/*.sha256
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+        working-directory: streamdeck-simulator/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build standalone binary
+        run: pyinstaller streamdeck.spec
+
+      - name: Package release tarball
+        run: |
+          ver="${{ github.ref_name }}"
+          if [ "$ver" = "main" ] || [ "$ver" = "master" ]; then ver="dev"; fi
+          mkdir -p pkg
+          cp dist/StreamDeckCompanion pkg/
+          cp ../../tools/release/run-streamdeck.sh ../../tools/release/README.txt pkg/
+          chmod +x pkg/StreamDeckCompanion pkg/run-streamdeck.sh
+          tarball="DockOps-StreamDeck-$ver-linux-x64.tar.gz"
+          tar -czf "$tarball" -C pkg .
+          sha256sum "$tarball" > "$tarball.sha256"
+          ls -la *.tar.gz *.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            streamdeck-simulator/server/*.tar.gz
+            streamdeck-simulator/server/*.sha256
+
+  build-firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build ESP32 firmware
+        run: |
+          pip install platformio
+          pio run -d esp32-firmware
+          ver="${{ github.ref_name }}"
+          if [ "$ver" = "main" ] || [ "$ver" = "master" ]; then ver="dev"; fi
+          cp esp32-firmware/.pio/build/esp32-2432S028/firmware.bin \
+             "firmware-esp32-2432S028-$ver.bin"
+          sha256sum firmware-esp32-2432S028-*.bin > firmware-esp32-2432S028-$ver.bin.sha256
+          ls -la firmware-esp32-*.bin*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-firmware
+          path: |
+            firmware-esp32-*.bin*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-windows, build-linux, build-firmware]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-files/*
+          generate_release_notes: true

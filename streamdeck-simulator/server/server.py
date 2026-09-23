@@ -28,7 +28,27 @@ CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', 'http://*.local:*
 # Server configuration
 PORT = 8765
 HOST = '0.0.0.0'
-SIMULATOR_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+
+def _runtime_paths():
+    """Resolve resource + writable-state directories (PyInstaller-aware).
+
+    Frozen (PyInstaller onefile/onedir): read-only bundled web UI lives in
+    sys._MEIPASS, while user state (profiles/settings) must live next to
+    the executable so it survives restarts and stays writable.
+    Dev (python server.py): resources = repo simulator dir, state = server dir.
+    """
+    if getattr(sys, 'frozen', False):
+        resource_dir = sys._MEIPASS
+        state_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        resource_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        state_dir = os.path.dirname(os.path.abspath(__file__))
+    return resource_dir, state_dir
+
+
+RESOURCE_DIR, STATE_DIR = _runtime_paths()
+SIMULATOR_DIR = RESOURCE_DIR
 
 def _obs_get_field(obj, *names):
     """Read a field from an obsws-python response regardless of key naming style.
@@ -1251,7 +1271,7 @@ def http_proxy():
 
 # Profile persistence: survive server restarts so the ESP32 device keeps
 # its buttons even when the companion server is restarted.
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+CURRENT_DIR = STATE_DIR
 PROFILE_STATE_FILE = os.path.join(CURRENT_DIR, 'profile_state.json')
 SETTINGS_DB_FILE = os.path.join(CURRENT_DIR, 'server_settings.json')
 
@@ -1643,7 +1663,7 @@ def set_esp_ip():
     data = request.json
     esp_ip = data.get('ip')
     # حفظ الـ IP في ملف مؤقت أو في الذاكرة
-    with open('esp_ip.txt', 'w') as f:
+    with open(os.path.join(STATE_DIR, 'esp_ip.txt'), 'w') as f:
         f.write(esp_ip)
     return jsonify({'success': True})
 

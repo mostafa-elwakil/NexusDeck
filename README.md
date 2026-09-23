@@ -36,13 +36,34 @@ esp32-micropython/    MicroPython alternative implementation
 - USB cable and an available serial port
 - Windows Firewall must allow inbound TCP traffic on port `8765`
 
-## Start the Simulator
+## Download (No Python Needed)
+
+Get the latest release from **GitHub → Releases** (`dock-ops` repo):
+
+| File | Platform | Contents |
+| --- | --- | --- |
+| `DockOps-StreamDeck-vX.Y.Z-windows-x64.zip` | Windows 10/11 64-bit | `StreamDeckCompanion.exe` + launcher, UI built in |
+| `DockOps-StreamDeck-vX.Y.Z-linux-x64.tar.gz` | Linux 64-bit (Ubuntu 22.04+) | `StreamDeckCompanion` binary + launcher, UI built in |
+| `firmware-esp32-2432S028-vX.Y.Z.bin` (+ `.sha256` files) | ESP32-2432S028 (CYD) | Ready-to-flash firmware |
+
+1. Extract the archive, then run `Run-StreamDeck.bat` (Windows) or `./run-streamdeck.sh` (Linux).
+2. Open `http://localhost:8765/` (opens automatically).
+3. Your profiles/settings are saved next to the executable and survive updates — just overwrite the old executable with the new one.
+
+> Every push of a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`) builds and publishes these files automatically via GitHub Actions.
+
+## Start the Simulator (From Source)
 
 From the repository root, run:
 
 ```powershell
 cd streamdeck-simulator
-.\run_simulator.bat
+.\run_simulator.bat        # Windows
+```
+
+```bash
+cd streamdeck-simulator
+chmod +x run_simulator.sh && ./run_simulator.sh   # Linux
 ```
 
 The companion server listens on:
