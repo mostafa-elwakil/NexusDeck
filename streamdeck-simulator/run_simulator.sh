@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# StreamDeck Simulator - One-Click Launcher for Linux
+# NexusDeck Simulator - One-Click Launcher for Linux
 # Starts the companion server (venv) and opens the simulator in your browser
 set -e
 
 echo "========================================"
-echo "StreamDeck Simulator Launcher"
+echo "NexusDeck Simulator Launcher"
 echo "========================================"
 echo
 
@@ -44,7 +44,7 @@ if command -v xdg-open >/dev/null 2>&1; then
 fi
 
 echo "========================================"
-echo "StreamDeck Simulator is running!"
+echo "NexusDeck Simulator is running!"
 echo "========================================"
 echo
 echo "Controls:"

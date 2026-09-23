@@ -1,14 +1,14 @@
-DockOps StreamDeck - Companion App (no Python installation needed)
+NexusDeck - Companion App (no Python installation needed)
 =====================================================================
 
 QUICK START (portable, no install)
-  Windows: double-click Run-StreamDeck.bat
-  Linux:   chmod +x run-streamdeck.sh StreamDeckCompanion && ./run-streamdeck.sh
+  Windows: double-click Run-NexusDeck.bat
+  Linux:   chmod +x run-nexusdeck.sh NexusDeckCompanion && ./run-nexusdeck.sh
 
   Then open http://localhost:8765/ in your browser (opens automatically).
 
 FULL INSTALL
-  Windows: run DockOps-StreamDeck-Setup-*-windows-x64.exe (per-user, no
+  Windows: run NexusDeck-Setup-*-windows-x64.exe (per-user, no
   admin needed). Optional: desktop icon + start automatically at logon.
   Linux:   ./install.sh [--enable-background] [--uninstall]
   installs to ~/.local (app menu entry + optional login service).
@@ -19,14 +19,14 @@ BACKGROUND MODE
   Use the Quit button there to stop the server.
 
 WHAT'S INSIDE
-  StreamDeckCompanion(.exe) - the companion server, web simulator UI included.
+  NexusDeckCompanion(.exe) - the companion server, web simulator UI included.
   Your profiles/settings are saved next to the executable
   (profile_state.json, server_settings.json) and survive updates -
   just copy the new executable over the old one.
 
 FIRST RUN ON ESP32
   Flash the firmware (see firmware-esp32-*.bin + PlatformIO instructions
-  in the main README), then on first boot join the "StreamDeck-Setup"
+  in the main README), then on first boot join the "NexusDeck-Setup"
   Wi-Fi network to enter your home Wi-Fi + this computer's address.
 
 NOTES

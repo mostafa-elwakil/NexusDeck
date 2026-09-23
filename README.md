@@ -1,11 +1,11 @@
-# Dock Ops StreamDeck
+# NexusDeck
 
-A network-connected Stream Deck built around the ESP32-2432S028 CYD display and a Windows companion simulator + Flask server.
+A network-connected macro control deck built around the ESP32-2432S028 CYD display and a Windows companion simulator + Flask server.
 
 ## Features
 
 - **12-button ESP32 touch interface** — fixed 4×3 grid in landscape mode, matching the web simulator exactly
-- **No hardcoded Wi-Fi or server IP** — first boot (or a 2.5s hold on the status bar) opens a `StreamDeck-Setup` Wi-Fi captive portal where you enter Wi-Fi credentials, the server URL, and the background color
+- **No hardcoded Wi-Fi or server IP** — first boot (or a 2.5s hold on the status bar) opens a `NexusDeck-Setup` Wi-Fi captive portal where you enter Wi-Fi credentials, the server URL, and the background color
 - **~1 second profile synchronization** — the ESP32 polls the server every second; changing a profile on either side syncs to the other automatically
 - **Real drawn icons** — button icons render as vector shapes on the ESP32 screen (play, clock, camera, envelope, gear, tomato, …), with text fallback for unknown icons
 - **Live widgets with real countdowns on ESP32** — timer, stopwatch, clock, uptime, CPU/RAM
@@ -38,17 +38,17 @@ esp32-micropython/    MicroPython alternative implementation
 
 ## Download (No Python Needed)
 
-Get the latest release from **GitHub → Releases** (`dock-ops` repo):
+Get the latest release from **GitHub → Releases**:
 
 | File | Platform | Contents |
 | --- | --- | --- |
-| `DockOps-StreamDeck-Setup-vX.Y.Z-windows-x64.exe` | Windows 10/11 64-bit | **Recommended installer**: per-user setup, no admin needed, optional desktop icon + start at logon |
-| `DockOps-StreamDeck-vX.Y.Z-windows-x64.zip` | Windows 10/11 64-bit | Portable: `StreamDeckCompanion.exe` + launcher, UI built in |
-| `DockOps-StreamDeck-vX.Y.Z-linux-x64.tar.gz` | Linux 64-bit (Ubuntu 22.04+) | Portable binary + launcher + `install.sh` installer |
+| `NexusDeck-Setup-vX.Y.Z-windows-x64.exe` | Windows 10/11 64-bit | **Recommended installer**: per-user setup, no admin needed, optional desktop icon + start at logon |
+| `NexusDeck-vX.Y.Z-windows-x64.zip` | Windows 10/11 64-bit | Portable: `NexusDeckCompanion.exe` + launcher, UI built in |
+| `NexusDeck-vX.Y.Z-linux-x64.tar.gz` | Linux 64-bit (Ubuntu 22.04+) | Portable binary + launcher + `install.sh` installer |
 | `firmware-esp32-2432S028-vX.Y.Z.bin` (+ `.sha256` files) | ESP32-2432S028 (CYD) | Ready-to-flash firmware |
 
-1. **Windows**: run the `Setup-*.exe` installer — or extract the zip and run `Run-StreamDeck.bat`.
-   **Linux**: extract the tarball and run `./install.sh` (add `--enable-background` to start at login, `--uninstall` to remove) — or just run `./run-streamdeck.sh` portably.
+1. **Windows**: run the `Setup-*.exe` installer — or extract the zip and run `Run-NexusDeck.bat`.
+   **Linux**: extract the tarball and run `./install.sh` (add `--enable-background` to start at login, `--uninstall` to remove) — or just run `./run-nexusdeck.sh` portably.
 2. Open `http://localhost:8765/` (opens automatically).
 3. Your profiles/settings are saved next to the executable and survive updates — just overwrite the old executable with the new one.
 
@@ -90,7 +90,7 @@ captive portal — `esp32-firmware/include/config.h` values are **ignored** by t
 
 1. Flash the firmware (see below) and power the ESP32.
 2. On first boot the screen shows **“WiFi Setup Needed”**.
-3. On your phone/PC, connect to the **`StreamDeck-Setup`** Wi-Fi network (password: `password123`).
+3. On your phone/PC, connect to the **`NexusDeck-Setup`** Wi-Fi network (password: `password123`).
 4. Open **`http://192.168.4.1`** and enter:
    - your home/office Wi-Fi SSID + password,
    - **Server URL**, e.g. `http://192.168.1.50:8765` (your PC’s LAN IP — find it with `ipconfig`),

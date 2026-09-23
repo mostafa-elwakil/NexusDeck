@@ -1,6 +1,6 @@
 /**
  * Cleanup Manager
- * Handles graceful shutdown and resource cleanup for StreamDeck Application
+ * Handles graceful shutdown and resource cleanup for NexusDeck Application
  */
 
 class CleanupManager {

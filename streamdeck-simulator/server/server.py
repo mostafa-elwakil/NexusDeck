@@ -1,5 +1,5 @@
 """
-StreamDeck Companion Server
+NexusDeck Companion Server
 Lightweight Python server for system commands, resource monitoring, and application control
 Enhanced with security, rate limiting, and improved error handling
 """
@@ -886,7 +886,7 @@ def health_check():
     log_request('GET /api/health')
     return jsonify({
         'status': 'ok',
-        'server': 'StreamDeck Companion Server',
+        'server': 'NexusDeck Companion Server',
         'version': '2.0.0',
         'platform': platform.system(),
         'timestamp': datetime.now().isoformat()
@@ -1370,7 +1370,7 @@ def get_profile():
     """Get current profile for ESP32 synchronization"""
     log_request('GET /api/get-profile')
 
-    client = (request.headers.get('X-StreamDeck-Client') or '').strip().lower()
+    client = (request.headers.get('X-NexusDeck-Client') or '').strip().lower()
     if client == 'esp32':
         _record_esp32_sync(current_profile)
         esp32_ip = request.remote_addr
@@ -1417,8 +1417,8 @@ def handle_settings():
 
 
 # ===== System: run in background (autostart at login) =====
-AUTOSTART_LNK_NAME = 'DockOps StreamDeck.lnk'
-SYSTEMD_UNIT_NAME = 'streamdeck-companion.service'
+AUTOSTART_LNK_NAME = 'NexusDeck.lnk'
+SYSTEMD_UNIT_NAME = 'nexusdeck-companion.service'
 
 
 def _server_launch_target():
@@ -1493,7 +1493,7 @@ def set_autostart_windows(enabled):
         f"$sc.TargetPath = {_ps_string(exe)}; "
         f"$sc.Arguments = {_ps_string(arg_str)}; "
         f"$sc.WorkingDirectory = {_ps_string(os.path.dirname(exe))}; "
-        "$sc.Description = 'DockOps StreamDeck Companion (background)'; "
+        "$sc.Description = 'NexusDeck Companion (background)'; "
         "$sc.Save(); Write-Output 'OK'"
     )
     try:
@@ -1530,7 +1530,7 @@ def set_autostart_linux(enabled):
     exec_start = ' '.join(f'"{p}"' if ' ' in p else p for p in parts)
     unit = (
         '[Unit]\n'
-        'Description=DockOps StreamDeck Companion Server\n'
+        'Description=NexusDeck Companion Server\n'
         'After=network-online.target\n'
         'Wants=network-online.target\n'
         '\n'
@@ -2110,7 +2110,7 @@ if __name__ == '__main__':
             pass
 
     print("=" * 70)
-    print("StreamDeck Companion Server v2.0.0")
+    print("NexusDeck Companion Server v2.0.0")
     print("=" * 70)
     print(f"Platform: {platform.system()} {platform.release()}")
     print(f"Python: {platform.python_version()}")

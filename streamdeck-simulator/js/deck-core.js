@@ -1,5 +1,5 @@
 /**
- * StreamDeck Core Engine
+ * NexusDeck Core Engine
  * Handles button rendering, states, interactions, and visual effects
  */
 
@@ -19,10 +19,10 @@ class StreamDeckCore {
         this.audioContext = null;
 
         this.presets = {
-            'mini': { rows: 2, cols: 3, name: 'Stream Deck Mini' },
-            'cyd': { rows: 3, cols: 4, name: 'CYD OpsDeck' },
-            'classic': { rows: 3, cols: 5, name: 'Stream Deck Classic' },
-            'xl': { rows: 4, cols: 8, name: 'Stream Deck XL' }
+            'mini': { rows: 2, cols: 3, name: 'NexusDeck Mini' },
+            'cyd': { rows: 3, cols: 4, name: 'CYD NexusDeck' },
+            'classic': { rows: 3, cols: 5, name: 'NexusDeck Classic' },
+            'xl': { rows: 4, cols: 8, name: 'NexusDeck XL' }
         };
 
         this.init();
@@ -74,7 +74,7 @@ class StreamDeckCore {
         const plate = document.createElement('div');
         plate.className = 'deck-plate';
         plate.innerHTML = `
-            <span class="deck-logo">OpsDeck</span>
+            <span class="deck-logo">NexusDeck</span>
             <span class="deck-model">${this.presets[this.config.size]?.name || 'Control Deck'}</span>
         `;
 

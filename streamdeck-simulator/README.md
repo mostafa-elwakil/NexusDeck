@@ -1,10 +1,10 @@
-# StreamDeck Simulator 🎮
+# NexusDeck Simulator 🎮
 
-**محاكي Stream Deck الافتراضي - Virtual Elgato Stream Deck Simulator**
+**محاكي NexusDeck الافتراضي - Virtual macro control deck simulator**
 
-محاكي واقعي ثلاثي الأبعاد لجهاز Elgato Stream Deck يعمل في المتصفح بالكامل، مع أزرار تفاعلية، ويدجت حية، ومحرر مرئي للتخصيص.
+محاكي واقعي ثلاثي الأبعاد لجهاز تحكم (Control Deck) يعمل في المتصفح بالكامل، مع أزرار تفاعلية، ويدجت حية، ومحرر مرئي للتخصيص.
 
-A realistic 3D virtual Stream Deck simulator that runs entirely in the browser, featuring interactive buttons, live widgets, and a visual editor for customization.
+A realistic 3D virtual macro control deck simulator that runs entirely in the browser, featuring interactive buttons, live widgets, and a visual editor for customization.
 
 ---
 
@@ -16,10 +16,10 @@ A realistic 3D virtual Stream Deck simulator that runs entirely in the browser, 
 - **تأثيرات ميكانيكية تفاعلية** / Physical press animations with haptic feedback
 - **أصوات نقر اختيارية** / Optional click sounds using Web Audio API
 - **دعم أحجام متعددة** / Multiple deck sizes:
-  - Stream Deck Mini (3×2 = 6 buttons)
-  - CYD OpsDeck (4×3 = 12 buttons)
-  - Stream Deck Classic (5×3 = 15 buttons)
-  - Stream Deck XL (8×4 = 32 buttons)
+  - NexusDeck Mini (3×2 = 6 buttons)
+  - CYD NexusDeck (4×3 = 12 buttons)
+  - NexusDeck Classic (5×3 = 15 buttons)
+  - NexusDeck XL (8×4 = 32 buttons)
 
 ### 🚀 أنواع الإجراءات / Action Types
 
@@ -180,7 +180,7 @@ The Companion Server provides API endpoints for advanced actions.
 ```json
 {
   "status": "ok",
-  "server": "StreamDeck Companion Server",
+  "server": "NexusDeck Companion Server",
   "version": "1.0.0"
 }
 ```
@@ -384,9 +384,9 @@ netstat -ano | findstr :8765
 
 ## 📱 الاستخدام على الهاتف / Mobile Usage
 
-يمكن استخدام المحاكي على الهواتف والتابلت كـ Stream Deck محمول!
+يمكن استخدام المحاكي على الهواتف والتابلت كـ NexusDeck محمول!
 
-The simulator works on phones and tablets as a portable Stream Deck!
+The simulator works on phones and tablets as a portable NexusDeck!
 
 1. **افتح `index.html` في متصفح الهاتف** / Open `index.html` in mobile browser
 2. **أضف للشاشة الرئيسية** / Add to Home Screen (Chrome: ⋮ → Add to Home screen)
@@ -488,7 +488,6 @@ Developed by **DarkAI Team**
 
 ## 🙏 شكر وتقدير / Acknowledgments
 
-- **Elgato** لإلهام التصميم / For design inspiration
 - **مجتمع المطورين** للأدوات والمكتبات / Developer community for tools
 
 ---
@@ -504,6 +503,6 @@ For questions or issues:
 
 ---
 
-**استمتع باستخدام StreamDeck Simulator! 🎮**
+**استمتع باستخدام NexusDeck Simulator! 🎮**
 
-**Enjoy using StreamDeck Simulator! 🎮**
+**Enjoy using NexusDeck Simulator! 🎮**

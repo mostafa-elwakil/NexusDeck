@@ -197,7 +197,7 @@ class StreamDeck:
 
     def run(self):
         """Main loop"""
-        print("StreamDeck running!")
+        print("NexusDeck running!")
 
         # Initial sync
         self.sync_with_server()
@@ -218,7 +218,7 @@ class StreamDeck:
                 time.sleep(0.05)  # Small delay
 
             except KeyboardInterrupt:
-                print("\nStopping StreamDeck...")
+                print("\nStopping NexusDeck...")
                 break
             except Exception as e:
                 print(f"Runtime error: {e}")

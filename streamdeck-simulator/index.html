@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="StreamDeck Studio & Simulator - Virtual Elgato Stream Deck with live widgets and customization">
-    <title>OpsDeck Studio</title>
+    <meta name="description" content="NexusDeck Studio & Simulator - Virtual macro control deck with live widgets and customization">
+    <title>NexusDeck Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
@@ -22,7 +22,7 @@
 
     <div id="loading-screen" class="loading-screen">
         <div class="loading-mark">OD</div>
-        <div class="loading-title">OpsDeck Studio</div>
+        <div class="loading-title">NexusDeck Studio</div>
         <div class="loading-copy">Preparing your control surface</div>
     </div>
 
@@ -94,14 +94,14 @@
                         }
                     }, 350);
 
-                    console.log('StreamDeck Simulator initialized successfully');
+                    console.log('NexusDeck Simulator initialized successfully');
 
                     // Register cleanup tasks
                     if (window.globalCleanupManager) {
                         globalCleanupManager.register(() => this.cleanup(), 'StreamDeckApp');
                     }
                 } catch (error) {
-                    appLogger.error('Failed to initialize StreamDeck Simulator', { error: error.message });
+                    appLogger.error('Failed to initialize NexusDeck Simulator', { error: error.message });
                     alert('Failed to initialize application. Please refresh the page.');
                 }
             }
@@ -200,7 +200,7 @@
              * Complete cleanup - call on app shutdown
              */
             cleanup() {
-                console.log('🧹 Cleaning up StreamDeck components...');
+                console.log('🧹 Cleaning up NexusDeck components...');
 
                 try {
                     // Stop live widgets

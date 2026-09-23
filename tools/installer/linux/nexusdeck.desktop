@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=StreamDeck
-Comment=DockOps StreamDeck Companion
-Exec=@APP_DIR@/run-streamdeck.sh
+Name=NexusDeck
+Comment=NexusDeck Companion
+Exec=@APP_DIR@/run-nexusdeck.sh
 Terminal=true
 Categories=Utility;
 StartupNotify=false

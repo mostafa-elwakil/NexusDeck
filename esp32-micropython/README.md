@@ -1,6 +1,6 @@
-# ESP32-2432S028 StreamDeck - MicroPython Version
+# ESP32-2432S028 NexusDeck - MicroPython Version
 
-> نسخة MicroPython من مشروع StreamDeck للوحة ESP32-2432S028 (CYD)
+> نسخة MicroPython من مشروع NexusDeck للوحة ESP32-2432S028 (CYD)
 
 ---
 

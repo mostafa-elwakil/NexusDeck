@@ -1,8 +1,8 @@
-# ESP32-2432S028 StreamDeck Firmware
+# ESP32-2432S028 NexusDeck Firmware
 
-**ربط ESP32-2432S028 (CYD) بمشروع StreamDeck Simulator**
+**ربط ESP32-2432S028 (CYD) بمشروع NexusDeck**
 
-دليل شامل لتحويل جهاز CYD الخاص بك إلى Stream Deck حقيقي مع شاشة لمس تفاعلية.
+دليل شامل لتحويل جهاز CYD الخاص بك إلى وحدة تحكم NexusDeck حقيقية مع شاشة لمس تفاعلية.
 
 ---
 
@@ -111,18 +111,15 @@ pio device monitor
 
 ## ⚙️ الإعداد / Configuration
 
-### 1. إعداد WiFi
+### 1. إعداد WiFi (بدون تعديل الكود)
 
-عدّل الإعدادات في `main.cpp`:
+بعد رفع الفيرموير، سيفتح الجهاز شبكة باسم **NexusDeck-Setup** — اتصل بها من هاتفك ثم افتح `http://192.168.4.1` وأدخل:
 
-```cpp
-// WiFi Configuration
-const char* WIFI_SSID = "YOUR_WIFI_SSID";      // اسم شبكة WiFi
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"; // كلمة المرور
+- اسم شبكة WiFi وكلمة المرور
+- عنوان السيرفر، مثلا `http://192.168.1.100:8765`
+- لون الخلفية (اختياري)
 
-// Server Configuration
-const char* SERVER_URL = "http://192.168.1.100:8765"; // IP جهاز الكمبيوتر
-```
+تُحفظ الإعدادات في ذاكرة الجهاز. لإعادة الضبط لاحقاً: اضغط مطولاً على شريط الحالة ~2.5 ثانية.
 
 ### 2. معرفة IP الكمبيوتر
 
@@ -150,7 +147,7 @@ python server.py
 يجب أن ترى:
 ```
 ========================================
-StreamDeck Companion Server
+NexusDeck Companion Server
 ========================================
 Server: http://0.0.0.0:8765
 Server is running...
@@ -211,15 +208,9 @@ Server is running...
 ### المشكلة: ESP32 لا يتصل بالـ WiFi
 
 **الحلول:**
-```cpp
-// 1. تأكد من صحة SSID والباسورد
-const char* WIFI_SSID = "YourNetworkName";
-const char* WIFI_PASSWORD = "YourPassword";
-
-// 2. جرب إعادة تشغيل ESP32
-
-// 3. تأكد من أن WiFi على نطاق 2.4GHz (ESP32 لا يدعم 5GHz)
-```
+1. أعد فتح بوابة الإعداد (اضغط مطولاً على شريط الحالة ~2.5 ثانية) وتأكد من صحة SSID والباسورد
+2. جرب إعادة تشغيل ESP32
+3. تأكد من أن WiFi على نطاق 2.4GHz (ESP32 لا يدعم 5GHz)
 
 ### المشكلة: الشاشة بيضاء أو فارغة
 
@@ -254,15 +245,12 @@ uint16_t y = map(p.y, 240, 3800, 0, SCREEN_HEIGHT);
    python server.py
    ```
 
-2. تأكد من IP صحيح:
-   ```cpp
-   const char* SERVER_URL = "http://192.168.1.X:8765";
-   ```
+2. تأكد من عنوان السيرفر الصحيح (مثلا `http://192.168.1.X:8765`) من بوابة الإعداد
 
 3. تأكد من Firewall لا يحجب Port 8765:
    ```cmd
    # Windows
-   netsh advfirewall firewall add rule name="StreamDeck" dir=in action=allow protocol=TCP localport=8765
+   netsh advfirewall firewall add rule name="NexusDeck" dir=in action=allow protocol=TCP localport=8765
    ```
 
 ### المشكلة: الأزرار لا تنفذ الإجراءات
@@ -366,7 +354,7 @@ Additional:
 
 ```
 =================================
-StreamDeck ESP32-2432S028 Firmware
+NexusDeck ESP32-2432S028 Firmware
 =================================
 
 Initializing display...
@@ -461,6 +449,6 @@ esp32-firmware/
 
 ---
 
-**استمتع بـ ESP32 StreamDeck! 🎮**
+**استمتع بـ NexusDeck على ESP32! 🎮**
 
-**Enjoy your ESP32 StreamDeck! 🎮**
+**Enjoy your NexusDeck on ESP32! 🎮**

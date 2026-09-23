@@ -1,9 +1,9 @@
 @echo off
-REM StreamDeck Simulator - One-Click Launcher for Windows
+REM NexusDeck Simulator - One-Click Launcher for Windows
 REM This script starts the companion server and opens the simulator in your browser
 
 echo ========================================
-echo StreamDeck Simulator Launcher
+echo NexusDeck Simulator Launcher
 echo ========================================
 echo.
 
@@ -38,7 +38,7 @@ echo Server URL: http://localhost:8765
 echo.
 
 REM Start server in background
-start "StreamDeck Server" cmd /c "python server.py"
+start "NexusDeck Server" cmd /c "python server.py"
 
 REM Wait for server to start
 timeout /t 3 /nobreak >nul
@@ -53,7 +53,7 @@ REM Open the simulator through Flask so profile sync is allowed
 start "" "http://localhost:8765/"
 
 echo ========================================
-echo StreamDeck Simulator is running!
+echo NexusDeck Simulator is running!
 echo ========================================
 echo.
 echo Controls:

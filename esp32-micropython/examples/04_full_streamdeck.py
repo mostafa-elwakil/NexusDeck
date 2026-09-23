@@ -14,7 +14,7 @@ from lib.utils import connect_wifi
 
 def main():
     print("=" * 40)
-    print("Full StreamDeck Example")
+    print("Full NexusDeck Example")
     print("=" * 40)
 
     # Initialize SPI
@@ -79,7 +79,7 @@ def main():
     )
 
     print("\n" + "=" * 40)
-    print("StreamDeck Ready!")
+    print("NexusDeck Ready!")
     print(f"Server: {SERVER_URL}")
     print(f"Grid: {GRID_COLS}x{GRID_ROWS}")
     print("=" * 40)

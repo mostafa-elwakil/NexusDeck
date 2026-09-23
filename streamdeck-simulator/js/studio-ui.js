@@ -1,5 +1,5 @@
 /**
- * StreamDeck Studio UI Editor
+ * NexusDeck Studio UI Editor
  * Visual editor for customizing buttons, creating actions, and managing profiles
  */
 
@@ -72,7 +72,7 @@ class StudioUI {
                 <div class="app-brand">
                     <span class="brand-mark">OD</span>
                     <div class="brand-copy">
-                        <strong>OpsDeck</strong>
+                        <strong>NexusDeck</strong>
                         <span>Studio</span>
                     </div>
                 </div>

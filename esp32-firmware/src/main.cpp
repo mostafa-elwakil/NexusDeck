@@ -1,5 +1,5 @@
 /**
- * ESP32-2432S028 StreamDeck Firmware
+ * ESP32-2432S028 NexusDeck Firmware
  * Hardware: Cheap Yellow Display (CYD)
  * Display: ILI9341 240x320 TFT with XPT2046 Touch
  *
@@ -137,7 +137,7 @@ bool serverAvailable = false;
 int cpuPercent = 0;
 int ramPercent = 0;
 unsigned long lastStatsFetch = 0;
-String currentProfileName = "StreamDeck";
+String currentProfileName = "NexusDeck";
 ButtonResetSchedule buttonReset = {255, 0, false};
 bool statusBarDrawn = false;
 uint16_t deckBackgroundColor = TFT_DARK_BG;
@@ -239,7 +239,7 @@ String homeClockHM();
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=================================");
-    Serial.println("StreamDeck ESP32-2432S028 Firmware");
+    Serial.println("NexusDeck ESP32-2432S028 Firmware");
     Serial.println("=================================\n");
 
     // Initialize display FIRST
@@ -252,7 +252,7 @@ void setup() {
     loadSettings();
     deckBackgroundColor = parseColor(bgColorHex);
 
-    // Connect to WiFi or launch StreamDeck-Setup portal
+    // Connect to WiFi or launch NexusDeck-Setup portal
     setupWiFi();
 
     // Initialize buttons with defaults
@@ -314,7 +314,7 @@ void loop() {
     // Backlight phase-end alert blinking (non-blocking)
     updateBacklight();
 
-    // Hold top area/status bar for 2.5s to trigger StreamDeck-Setup portal anytime.
+    // Hold top area/status bar for 2.5s to trigger NexusDeck-Setup portal anytime.
     // The timer MUST reset on release, otherwise any later short tap opens the portal.
     static unsigned long portalHoldStart = 0;
     if (touch.touched()) {
@@ -463,7 +463,7 @@ void setupDisplay() {
     tft.fillScreen(deckBackgroundColor);
     tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("StreamDeck CYD", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 4);
+    tft.drawString("NexusDeck CYD", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 4);
     tft.drawString("Initializing...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
     delay(2000);
 
@@ -481,7 +481,7 @@ void setupTouch() {
     Serial.println("Touch screen initialized!");
 }
 
-// ===== Setup Portal (StreamDeck-Setup) =====
+// ===== Setup Portal (NexusDeck-Setup) =====
 void openSetupPortal() {
     tft.fillScreen(deckBackgroundColor);
     tft.setTextDatum(MC_DATUM);
@@ -492,7 +492,7 @@ void openSetupPortal() {
     tft.drawString("1. Connect Phone/PC to WiFi:", SCREEN_WIDTH / 2, 75, 2);
 
     tft.setTextColor(TFT_CYAN, TFT_DARK_BG);
-    tft.drawString("StreamDeck-Setup", SCREEN_WIDTH / 2, 105, 4);
+    tft.drawString("NexusDeck-Setup", SCREEN_WIDTH / 2, 105, 4);
 
     tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
     tft.drawString("Password: password123", SCREEN_WIDTH / 2, 135, 2);
@@ -501,7 +501,7 @@ void openSetupPortal() {
     tft.setTextColor(TFT_GREEN, TFT_DARK_BG);
     tft.drawString("Open: 192.168.4.1", SCREEN_WIDTH / 2, 195, 2);
 
-    Serial.println("Starting config portal: StreamDeck-Setup");
+    Serial.println("Starting config portal: NexusDeck-Setup");
     WiFiManager wm;
     wm.setConfigPortalTimeout(180);
 
@@ -512,7 +512,7 @@ void openSetupPortal() {
     WiFiManagerParameter custom_bg_follow("bg_follow", "Follow profile background instead", "1", 2, "type=\"checkbox\"");
     wm.addParameter(&custom_bg_follow);
 
-    if (!wm.startConfigPortal("StreamDeck-Setup", "password123")) {
+    if (!wm.startConfigPortal("NexusDeck-Setup", "password123")) {
         Serial.println("Portal timeout, restarting...");
         delay(1000);
         ESP.restart();
@@ -590,7 +590,7 @@ void setupWiFi() {
         tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
         tft.drawString("Connecting to WiFi...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 2);
 
-        if (!wm.autoConnect("StreamDeck-Setup", "password123")) {
+        if (!wm.autoConnect("NexusDeck-Setup", "password123")) {
             Serial.println("WiFi connection failed, restarting...");
             delay(1000);
             ESP.restart();
@@ -991,7 +991,7 @@ void syncProfile() {
         // Get profile data
         http.end();
         http.begin(String(SERVER_URL) + "/api/get-profile");
-        http.addHeader("X-StreamDeck-Client", "esp32");
+        http.addHeader("X-NexusDeck-Client", "esp32");
         httpCode = http.GET();
 
         if (httpCode == 200) {
@@ -1541,7 +1541,7 @@ void fetchProfileNames() {
     HTTPClient h;
     h.setTimeout(5000);
     h.begin(String(SERVER_URL) + "/api/profiles");
-    h.addHeader("X-StreamDeck-Client", "esp32");
+    h.addHeader("X-NexusDeck-Client", "esp32");
     if (h.GET() == 200) {
         DynamicJsonDocument doc(2048);
         if (!deserializeJson(doc, h.getString())) {
@@ -1570,7 +1570,7 @@ void fetchHomeInfo(bool force) {
     HTTPClient h;
     h.setTimeout(8000);
     h.begin(String(SERVER_URL) + "/api/home-info");
-    h.addHeader("X-StreamDeck-Client", "esp32");
+    h.addHeader("X-NexusDeck-Client", "esp32");
     if (h.GET() != 200) {
         h.end();
         return;

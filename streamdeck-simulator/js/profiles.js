@@ -1,5 +1,5 @@
 /**
- * StreamDeck Profiles Manager
+ * NexusDeck Profiles Manager
  * Handles profile loading, saving, import/export, and LocalStorage persistence
  */
 

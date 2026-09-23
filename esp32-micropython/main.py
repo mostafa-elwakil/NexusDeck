@@ -1,5 +1,5 @@
 """
-ESP32-2432S028 StreamDeck - Main Entry Point
+ESP32-2432S028 NexusDeck - Main Entry Point
 MicroPython Version
 """
 
@@ -16,7 +16,7 @@ def main():
     """Main initialization and loop"""
 
     print("=" * 40)
-    print("ESP32-2432S028 StreamDeck")
+    print("ESP32-2432S028 NexusDeck")
     print("MicroPython Version")
     print("=" * 40)
 
@@ -80,7 +80,7 @@ def main():
     )
 
     print("\n" + "=" * 40)
-    print("StreamDeck Ready!")
+    print("NexusDeck Ready!")
     print(f"Server: {SERVER_URL}")
     print(f"Grid: {GRID_COLS}x{GRID_ROWS}")
     print("=" * 40 + "\n")

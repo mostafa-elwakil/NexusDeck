@@ -1,5 +1,5 @@
 /**
- * StreamDeck Live Widgets
+ * NexusDeck Live Widgets
  * Dynamic buttons that update automatically: CPU/RAM monitor, clock, stopwatch, ping, etc.
  */
 

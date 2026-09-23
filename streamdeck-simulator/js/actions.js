@@ -1,5 +1,5 @@
 /**
- * StreamDeck Actions Engine
+ * NexusDeck Actions Engine
  * Handles execution of various action types: system commands, macros, navigation, etc.
  */
 

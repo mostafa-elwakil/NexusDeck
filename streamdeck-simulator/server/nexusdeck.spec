@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for the DockOps StreamDeck companion server.
+"""PyInstaller spec for the NexusDeck companion server.
 
 Builds a standalone executable with the web simulator UI bundled inside:
     cd streamdeck-simulator/server
     pyinstaller streamdeck.spec
 
-Output: dist/StreamDeckCompanion(.exe)
+Output: dist/NexusDeckCompanion(.exe)
 """
 import os
 
@@ -51,7 +51,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='StreamDeckCompanion',
+    name='NexusDeckCompanion',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

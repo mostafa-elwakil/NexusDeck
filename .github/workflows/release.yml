@@ -33,17 +33,17 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build standalone executable
-        run: pyinstaller streamdeck.spec
+        run: pyinstaller nexusdeck.spec
 
       - name: Package release zip
         run: |
           $ver = "${{ github.ref_name }}"
           if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
           New-Item -ItemType Directory -Force -Path pkg | Out-Null
-          Copy-Item dist/StreamDeckCompanion.exe pkg/
-          Copy-Item ../../tools/release/Run-StreamDeck.bat pkg/
+          Copy-Item dist/NexusDeckCompanion.exe pkg/
+          Copy-Item ../../tools/release/Run-NexusDeck.bat pkg/
           Copy-Item ../../tools/release/README.txt pkg/
-          $zip = "DockOps-StreamDeck-$ver-windows-x64.zip"
+          $zip = "NexusDeck-$ver-windows-x64.zip"
           Compress-Archive -Path pkg/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash + "  $zip" | Out-File "$zip.sha256" -Encoding ascii
           Get-ChildItem *.zip, *.sha256
@@ -75,18 +75,18 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build standalone binary
-        run: pyinstaller streamdeck.spec
+        run: pyinstaller nexusdeck.spec
 
       - name: Package release tarball
         run: |
           ver="${{ github.ref_name }}"
           if [ "$ver" = "main" ] || [ "$ver" = "master" ]; then ver="dev"; fi
           mkdir -p pkg
-          cp dist/StreamDeckCompanion pkg/
-          cp ../../tools/release/run-streamdeck.sh ../../tools/release/README.txt pkg/
-          cp ../../tools/installer/linux/install.sh ../../tools/installer/linux/dockops-streamdeck.desktop pkg/
-          chmod +x pkg/StreamDeckCompanion pkg/run-streamdeck.sh pkg/install.sh
-          tarball="DockOps-StreamDeck-$ver-linux-x64.tar.gz"
+          cp dist/NexusDeckCompanion pkg/
+          cp ../../tools/release/run-nexusdeck.sh ../../tools/release/README.txt pkg/
+          cp ../../tools/installer/linux/install.sh ../../tools/installer/linux/nexusdeck.desktop pkg/
+          chmod +x pkg/NexusDeckCompanion pkg/run-nexusdeck.sh pkg/install.sh
+          tarball="NexusDeck-$ver-linux-x64.tar.gz"
           tar -czf "$tarball" -C pkg .
           sha256sum "$tarball" > "$tarball.sha256"
           ls -la *.tar.gz *.sha256
@@ -149,7 +149,7 @@ jobs:
         run: |
           $ver = "${{ github.ref_name }}"
           if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
-          Expand-Archive -Path staging/DockOps-StreamDeck-*-windows-x64.zip -DestinationPath staging/pkg -Force
+          Expand-Archive -Path staging/NexusDeck-*-windows-x64.zip -DestinationPath staging/pkg -Force
           & "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe" /DMyAppVersion="$ver" /DStagingDir="staging/pkg" /O"installer-out" tools/installer/windows/setup.iss
           $exe = Get-ChildItem installer-out/*.exe | Select-Object -First 1
           (Get-FileHash $exe.FullName -Algorithm SHA256).Hash + "  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii
