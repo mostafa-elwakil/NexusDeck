@@ -190,7 +190,7 @@ class ActionsEngine {
             throw new Error('Companion server required for Home Assistant');
         }
         if (!action.domain || !action.service || !action.entity_id) {
-            throw new Error('Home Assistant action needs domain, service and entity_id');
+            throw new Error('Home Assistant button saved without Service/Entity — open it in Studio, fill the fields, press Apply Changes');
         }
 
         const response = await fetch(`${this.serverUrl}/api/ha-control`, {

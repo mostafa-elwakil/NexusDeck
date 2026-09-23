@@ -1289,7 +1289,12 @@ class StudioUI {
 
         let action = null;
         if (actionType) {
-            action = this.buildActionFromInputs(actionType);
+            try {
+                action = this.buildActionFromInputs(actionType);
+            } catch (error) {
+                this.showToast(error.message, 3000);
+                return;
+            }
         }
 
         this.deck.updateButton(this.selectedButton.index, {
@@ -1344,11 +1349,16 @@ class StudioUI {
             'copy_text': () => ({ type: 'copy_text', text: document.getElementById('action-text').value }),
             'keyboard_shortcut': () => ({ type: 'keyboard_shortcut', keys: document.getElementById('action-keys').value.trim() }),
             'home_assistant': () => {
+                const service = document.getElementById('action-ha-service')?.value.trim() || '';
+                const entity_id = document.getElementById('action-ha-entity')?.value.trim() || '';
+                if (!service || !entity_id) {
+                    throw new Error('Home Assistant needs a Service (e.g. toggle) and an Entity ID — pick one from "Load devices"');
+                }
                 const action = {
                     type: 'home_assistant',
                     domain: document.getElementById('action-ha-domain')?.value || 'light',
-                    service: document.getElementById('action-ha-service')?.value.trim() || '',
-                    entity_id: document.getElementById('action-ha-entity')?.value.trim() || '',
+                    service,
+                    entity_id,
                     url: document.getElementById('action-ha-url')?.value.trim() || ''
                 };
                 const data = document.getElementById('action-ha-data')?.value.trim() || '';
@@ -1377,15 +1387,12 @@ class StudioUI {
                     else if (type === 'copy_text') step.text = value;
                     else if (type === 'home_assistant') {
                         const m = value.match(/^([a-z_]+)\.([a-z_0-9]+)\s*:\s*([a-z_]+\.[a-z0-9_]+)$/i);
-                        if (m) {
-                            step.domain = m[1].toLowerCase();
-                            step.service = m[2].toLowerCase();
-                            step.entity_id = m[3].toLowerCase();
-                        } else {
-                            step.domain = '';
-                            step.service = '';
-                            step.entity_id = value;
+                        if (!m) {
+                            throw new Error('Home Assistant macro step must look like: domain.service:entity_id (e.g. light.toggle:light.bedroom)');
                         }
+                        step.domain = m[1].toLowerCase();
+                        step.service = m[2].toLowerCase();
+                        step.entity_id = m[3].toLowerCase();
                     }
                     else if (type === 'delay') step.ms = parseInt(value, 10) || 0;
                     if (delay > 0 && type !== 'delay') step.delay = Math.min(delay, 10000);
