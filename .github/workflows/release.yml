@@ -7,7 +7,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', 'V*']
   workflow_dispatch:
 
 permissions:
@@ -150,7 +150,10 @@ jobs:
           $ver = "${{ github.ref_name }}"
           if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
           Expand-Archive -Path staging/NexusDeck-*-windows-x64.zip -DestinationPath staging/pkg -Force
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe" /DMyAppVersion="$ver" /DStagingDir="staging/pkg" /O"installer-out" tools/installer/windows/setup.iss
+          # NOTE: StagingDir must be absolute - Inno resolves relative Source
+          # paths against the script's own directory, not the working dir.
+          $stagingAbs = Join-Path (Get-Location) 'staging/pkg'
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe" /DMyAppVersion="$ver" /DStagingDir="$stagingAbs" /O"installer-out" tools/installer/windows/setup.iss
           $exe = Get-ChildItem installer-out/*.exe | Select-Object -First 1
           (Get-FileHash $exe.FullName -Algorithm SHA256).Hash + "  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii
           Get-ChildItem installer-out/
