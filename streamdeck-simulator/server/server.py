@@ -922,7 +922,7 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'server': 'NexusDeck Companion Server',
-        'version': '2.0.0',
+        'version': '2.2.0',
         'platform': platform.system(),
         'timestamp': datetime.now().isoformat()
     })
@@ -2219,7 +2219,7 @@ if __name__ == '__main__':
             pass
 
     print("=" * 70)
-    print("NexusDeck Companion Server v2.0.0")
+    print("NexusDeck Companion Server v2.2.0")
     print("=" * 70)
     print(f"Platform: {platform.system()} {platform.release()}")
     print(f"Python: {platform.python_version()}")

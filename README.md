@@ -248,6 +248,15 @@ Optional keys: `home_lat` / `home_lon` (skip geocoding), `prayer_method` (0–15
 - **Top bar widgets**: toggle Date, Prayer, and Temp individually (remaining ones spread evenly).
 - **Screen brightness**: 10–100% slider ( applied instantly on the ESP32, backlight alerts still blink on top of it).
 
+## Tests
+
+Regression tests guard the persistence fixes (settings must survive restarts):
+
+```powershell
+python -m unittest discover -s tests -v   # server: state dir, atomic writes, migration, single instance
+node --test tests/profiles.test.js        # web: boot pulls server truth, never pushes stale cache
+```
+
 ## Notes
 
 - The ESP32 and computer must be on the same network.
