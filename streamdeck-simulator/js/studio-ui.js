@@ -868,6 +868,12 @@ class StudioUI {
                     <label>Application</label>
                     <input type="text" id="action-app" class="form-control" placeholder="code, chrome.exe, notepad" value="${this.attrValue(existingAction?.app)}">
                 </div>
+                <div class="form-group">
+                    <label>Installed on this PC (pick to fill)</label>
+                    <select id="action-app-picker" class="form-control">
+                        <option value="">Loading installed apps…</option>
+                    </select>
+                </div>
             `,
             'run_command': `
                 <div class="form-group">
@@ -1090,6 +1096,39 @@ class StudioUI {
         if (actionType === 'obs_control') {
             this.setupObsConfig(existingAction);
         }
+
+        if (actionType === 'open_app') {
+            this.setupOpenAppPicker();
+        }
+    }
+
+    async setupOpenAppPicker() {
+        const picker = document.getElementById('action-app-picker');
+        const input = document.getElementById('action-app');
+        if (!picker || !input) return;
+        picker.innerHTML = '<option value="">Loading installed apps…</option>';
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/installed-apps`);
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to list installed apps');
+            }
+            picker.innerHTML = '<option value="">— pick an installed app —</option>';
+            for (const app of result.apps || []) {
+                const option = document.createElement('option');
+                option.value = app.exe || app.name;
+                option.textContent = app.exe ? `${app.name} (${app.exe})` : app.name;
+                option.title = app.exe || app.name;
+                picker.appendChild(option);
+            }
+        } catch (error) {
+            picker.innerHTML = '<option value="">Installed list unavailable</option>';
+        }
+        picker.addEventListener('change', () => {
+            if (picker.value) {
+                input.value = picker.value;
+            }
+        });
     }
 
     setupWidgetConfig() {

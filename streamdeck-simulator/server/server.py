@@ -756,34 +756,52 @@ def execute_open_app(app_name, args=None):
 
     if not app_name:
         return False, 'Application name not provided'
-    valid, error = validate_app_name(app_name)
-    if not valid:
-        return False, error
+    # Absolute path to a real .exe (e.g. picked from installed apps).
+    resolved_app = None
+    if os.path.isabs(app_name) and os.path.isfile(app_name) \
+            and app_name.lower().endswith('.exe'):
+        resolved_app = os.path.abspath(app_name)
+    if resolved_app is None:
+        valid, error = validate_app_name(app_name)
+        if not valid:
+            return False, error
+        resolved_app = resolve_app_executable(app_name)
+        if not resolved_app:
+            return False, f'Application "{app_name}" not found'
     valid, error = validate_arguments(args)
     if not valid:
         return False, error
 
-    resolved_app = resolve_app_executable(app_name)
-    if not resolved_app:
-        return False, f'Application "{app_name}" not found'
+    # Launch from the exe's own folder: programs like OBS Studio resolve
+    # data files (locale/en-US.ini, ...) relative to the working directory.
+    app_dir = os.path.dirname(os.path.abspath(resolved_app)) or None
 
     try:
-        if platform.system() == 'Windows' and not args:
-            os.startfile(resolved_app)
-            return True, f'Successfully opened {app_name}'
-
-        if platform.system() == 'Windows' and resolved_app.lower().endswith(('.cmd', '.bat')):
+        exe_like = resolved_app.lower().endswith(('.exe', '.cmd', '.bat', '.com'))
+        if platform.system() == 'Windows' and exe_like and resolved_app.lower().endswith(('.cmd', '.bat')):
             subprocess.Popen(
                 ['cmd', '/c', resolved_app] + args,
+                cwd=app_dir,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
+        elif platform.system() == 'Windows' and exe_like:
+            subprocess.Popen(
+                [resolved_app] + args,
+                cwd=app_dir,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        elif platform.system() == 'Windows' and not args:
+            os.startfile(resolved_app)
+            return True, f'Successfully opened {app_name}'
         elif platform.system() == 'Windows':
             subprocess.Popen(
                 [resolved_app] + args,
+                cwd=app_dir,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
-            subprocess.Popen([resolved_app] + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen([resolved_app] + args, cwd=app_dir,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True, f'Successfully opened {app_name}'
     except FileNotFoundError:
         return False, f'Application "{app_name}" not found'
@@ -926,6 +944,82 @@ def health_check():
         'platform': platform.system(),
         'timestamp': datetime.now().isoformat()
     })
+
+_installed_apps_cache = {'at': 0.0, 'apps': None}
+_INSTALLED_APPS_TTL = 600
+
+
+def _guess_app_exe(display_icon, install_location):
+    """Best-effort exe path from Uninstall registry values."""
+    text = str(display_icon or '').strip().strip('"')
+    if ',' in text:
+        text = text.split(',')[0].strip().strip('"')
+    if text.lower().endswith('.exe') and os.path.isfile(text):
+        return os.path.abspath(text)
+    location = str(install_location or '').strip().strip('"')
+    if location.lower().endswith('.exe') and os.path.isfile(location):
+        return os.path.abspath(location)
+    return ''
+
+
+def _list_installed_apps():
+    """Installed Windows programs from the Uninstall registry (name + exe)."""
+    apps = {}
+    if platform.system() != 'Windows':
+        return []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    roots = [
+        (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'),
+        (winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'),
+        (winreg.HKEY_CURRENT_USER, r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'),
+    ]
+    for hive, subkey in roots:
+        try:
+            key = winreg.OpenKey(hive, subkey)
+        except OSError:
+            continue
+        index = 0
+        while True:
+            try:
+                subname = winreg.EnumKey(key, index)
+            except OSError:
+                break
+            index += 1
+            try:
+                with winreg.OpenKey(key, subname) as item:
+                    def reg_value(name):
+                        try:
+                            return winreg.QueryValueEx(item, name)[0]
+                        except OSError:
+                            return ''
+                    display_name = str(reg_value('DisplayName') or '').strip()
+                    if not display_name or display_name in apps:
+                        continue
+                    apps[display_name] = _guess_app_exe(
+                        reg_value('DisplayIcon'), reg_value('InstallLocation'))
+            except OSError:
+                continue
+    return [{'name': name, 'exe': exe}
+            for name, exe in sorted(apps.items(), key=lambda item: item[0].lower())]
+
+
+@app.route('/api/installed-apps', methods=['GET'])
+@rate_limit
+def installed_apps():
+    """Programs installed on this PC for the Studio open_app picker."""
+    log_request('GET /api/installed-apps')
+    now = time.time()
+    cached = _installed_apps_cache['apps']
+    if cached is not None and now - _installed_apps_cache['at'] < _INSTALLED_APPS_TTL:
+        return jsonify({'success': True, 'apps': cached, 'cached': True})
+    apps = _list_installed_apps()
+    _installed_apps_cache['at'] = now
+    _installed_apps_cache['apps'] = apps
+    return jsonify({'success': True, 'apps': apps, 'cached': False})
+
 
 @app.route('/api/system-stats', methods=['GET'])
 @rate_limit
