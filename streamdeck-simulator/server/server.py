@@ -27,7 +27,7 @@ app = Flask(__name__)
 CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', 'http://*.local:*', '127.0.0.1'])
 
 # Server configuration
-SERVER_VERSION = '2.3.1'
+SERVER_VERSION = '2.3.3'
 PORT = 8765
 HOST = '0.0.0.0'
 
