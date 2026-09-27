@@ -142,6 +142,17 @@ ButtonResetSchedule buttonReset = {255, 0, false};
 bool statusBarDrawn = false;
 uint16_t deckBackgroundColor = TFT_DARK_BG;
 int syncFailCount = 0;
+// Calendar events page state
+bool calPageActive = false;
+unsigned long calOpenedAt = 0;
+struct CalEvent {
+    String when;
+    String summary;
+};
+CalEvent calEvents[8];
+uint8_t calCount = 0;
+String calError = "";
+
 // Pomodoro dedicated page state
 bool pomoPageActive = false;
 int pomoPageIndex = -1; // 0..11 grid button, 255 = standalone home pomodoro
@@ -209,6 +220,10 @@ String truncateText(const String& text, uint8_t maxLen);
 bool anyOverlayActive();
 void openPomoPage(uint8_t index);
 void closePomoPage();
+void openCalendarPage();
+void closeCalendarPage();
+void drawCalendarPage();
+void handleCalTouch();
 void drawPomoPage();
 void handlePomoPageTouch();
 void pomoTapAction(uint8_t index);
@@ -352,13 +367,20 @@ void loop() {
     processButtonResets();
     updateRunningIndicators();
 
-    // Handle touch input (pomodoro page, home page, or grid)
+    // Handle touch input (pomodoro page, home page, calendar page, or grid)
     if (pomoPageActive) {
         handlePomoPageTouch();
     } else if (homePageActive) {
         handleHomeTouch();
+    } else if (calPageActive) {
+        handleCalTouch();
     } else {
         handleTouch();
+    }
+
+    // Calendar page auto-closes after 2 minutes
+    if (calPageActive && millis() - calOpenedAt > 120000) {
+        closeCalendarPage();
     }
 
     // Sync profile from server
@@ -927,6 +949,17 @@ void executeButtonAction(uint8_t index) {
         return;
     }
 
+    if (btn.actionType == "calendar") {
+        Serial.println("Opening Google Calendar...");
+        setButtonState(index, 2);
+        drawButton(index);
+        openCalendarPage();
+        setButtonState(index, 3);
+        drawButton(index);
+        scheduleButtonReset(index, 600);
+        return;
+    }
+
     // Send action to server
     setButtonState(index, 2); // Running state
     drawButton(index);
@@ -1409,7 +1442,7 @@ void pomoTapAction(uint8_t index) {
 
 // ===== Pomodoro Dedicated Page =====
 bool anyOverlayActive() {
-    return pomoPageActive || homePageActive;
+    return pomoPageActive || homePageActive || calPageActive;
 }
 
 void openPomoPage(uint8_t index) {
@@ -1434,6 +1467,116 @@ void closePomoPage() {
         drawStatusBar();
     }
     Serial.println("Pomodoro page closed");
+}
+
+// ===== Google Calendar events page =====
+void drawCalendarPage() {
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("CALENDAR", SCREEN_WIDTH / 2, 12, 2);
+    tft.drawFastHLine(10, 28, SCREEN_WIDTH - 20, TFT_DARKGREY);
+
+    if (calError.length() > 0) {
+        tft.setTextColor(TFT_YELLOW, deckBackgroundColor);
+        tft.drawString(truncateText(calError, 26), SCREEN_WIDTH / 2, 60, 2);
+        tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+        tft.drawString("Connect in Studio > System", SCREEN_WIDTH / 2, 84, 1);
+        tft.drawString("tap to close", SCREEN_WIDTH / 2, 220, 1);
+        return;
+    }
+    if (calCount == 0) {
+        tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+        tft.drawString("No upcoming events", SCREEN_WIDTH / 2, 60, 2);
+        tft.drawString("tap to close", SCREEN_WIDTH / 2, 220, 1);
+        return;
+    }
+    uint8_t shown = calCount > 7 ? 7 : calCount;
+    for (uint8_t i = 0; i < shown; i++) {
+        int y = 44 + i * 24;
+        tft.setTextDatum(ML_DATUM);
+        tft.setTextColor(TFT_CYAN, deckBackgroundColor);
+        tft.drawString(truncateText(calEvents[i].when, 12), 12, y, 2);
+        tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+        tft.drawString(truncateText(calEvents[i].summary, 20), 100, y, 2);
+    }
+    if (calCount > shown) {
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+        tft.drawString(String("+") + String(calCount - shown) + " more", SCREEN_WIDTH / 2, 44 + shown * 24, 1);
+    }
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_DARKGREY, deckBackgroundColor);
+    tft.drawString("tap to close", SCREEN_WIDTH / 2, 228, 1);
+}
+
+void openCalendarPage() {
+    calPageActive = true;
+    calOpenedAt = millis();
+    calCount = 0;
+    calError = "";
+    ignoreTouchUntil = millis() + 400;
+    if (!wifiConnected) {
+        calError = "No WiFi";
+        drawCalendarPage();
+        Serial.println("Calendar: no WiFi");
+        return;
+    }
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("Loading events...", SCREEN_WIDTH / 2, 60, 2);
+
+    HTTPClient h;
+    h.setTimeout(10000);
+    h.begin(String(SERVER_URL) + "/api/google/events?limit=8");
+    h.addHeader("X-NexusDeck-Client", "esp32");
+    if (h.GET() != 200) {
+        calError = "Server error";
+        h.end();
+        drawCalendarPage();
+        return;
+    }
+    DynamicJsonDocument doc(4096);
+    if (deserializeJson(doc, h.getString())) {
+        calError = "Bad response";
+        h.end();
+        drawCalendarPage();
+        return;
+    }
+    h.end();
+    if (!doc["success"]) {
+        calError = doc["error"] | "Not connected";
+        drawCalendarPage();
+        Serial.print("Calendar error: ");
+        Serial.println(calError);
+        return;
+    }
+    JsonArray items = doc["events"];
+    for (uint8_t i = 0; i < 8 && i < items.size(); i++) {
+        calEvents[i].when = items[i]["when"] | "";
+        calEvents[i].summary = items[i]["summary"] | "";
+        calCount++;
+    }
+    drawCalendarPage();
+    Serial.printf("Calendar opened with %d events\n", calCount);
+}
+
+void closeCalendarPage() {
+    calPageActive = false;
+    drawAllButtons();
+    drawStatusBar();
+    Serial.println("Calendar page closed");
+}
+
+void handleCalTouch() {
+    if (!touch.tirqTouched() || !touch.touched()) return;
+    if (millis() < ignoreTouchUntil) return;
+    static unsigned long calTouchDebounce = 0;
+    if (millis() < calTouchDebounce) return;
+    calTouchDebounce = millis() + 300;
+    ignoreTouchUntil = millis() + 400;
+    closeCalendarPage();
 }
 
 void drawPomoPage() {

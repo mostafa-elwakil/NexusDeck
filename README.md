@@ -248,6 +248,16 @@ Optional keys: `home_lat` / `home_lon` (skip geocoding), `prayer_method` (0–15
 - **Top bar widgets**: toggle Date, Prayer, and Temp individually (remaining ones spread evenly).
 - **Screen brightness**: 10–100% slider ( applied instantly on the ESP32, backlight alerts still blink on top of it).
 
+## Google Calendar Setup
+
+Tap a **Calendar** button on the ESP32 to see upcoming events on its screen (or test in the web simulator). One-time setup:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → create a project → enable the **Google Calendar API**.
+2. **APIs & Services → OAuth consent screen** → External → fill app name/email → add scope `.../auth/calendar.readonly` → add yourself as test user.
+3. **Credentials → Create Credentials → OAuth client ID** → type **Web application** → add redirect URI `http://localhost:8765/api/google/callback` (match your server port).
+4. In Studio open **⚙ System → Google Calendar**: paste Client ID + Client secret → **Save** → **Connect** → approve in the Google tab.
+5. Tokens stay on this PC only (like the HA token). **Forget** disconnects anytime.
+
 ## Tests
 
 Regression tests guard the persistence fixes (settings must survive restarts):

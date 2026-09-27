@@ -27,6 +27,7 @@ class ActionsEngine {
             'home_assistant': this.homeAssistant.bind(this),
             'custom_script': this.customScript.bind(this),
             'switch_profile': this.switchProfile.bind(this),
+            'calendar': this.showCalendar.bind(this),
             'custom': async (action, button) => {
                 if (typeof action.handler === 'function') {
                     return action.handler(action, button);
@@ -430,6 +431,22 @@ class ActionsEngine {
         }
 
         this.showNotification('Profile Switched', profile.name || 'Switched profile');
+    }
+
+    async showCalendar(action, button) {
+        if (!this.serverAvailable) {
+            throw new Error('Companion server required for calendar');
+        }
+
+        const response = await fetch(`${this.serverUrl}/api/google/events?limit=8`);
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'Failed to load calendar events');
+        }
+        const lines = (result.events || []).map((event) =>
+            `${event.when} - ${event.summary}`);
+        this.showNotification('Upcoming Events',
+            lines.length ? lines.join('\n') : 'No upcoming events');
     }
 
     getHistory(limit = 50) {

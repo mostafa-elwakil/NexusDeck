@@ -673,6 +673,10 @@ def _public_settings():
     public['ha_token_configured'] = bool(server_settings.get('ha_token')
                                          or os.getenv('HA_TOKEN', ''))
     public.pop('ha_token', None)
+    public['google_connected'] = bool(_google_refresh_token())
+    public['google_client_configured'] = bool(_google_client()['id'])
+    public.pop('google_client_secret', None)
+    public.pop('google_refresh_token', None)
     return public
 
 
@@ -1531,6 +1535,242 @@ def get_profile():
     return response
 
 
+# ===== Google Calendar (OAuth on the server, ESP only displays) =====
+# The ESP32 cannot do OAuth, so the companion holds the tokens (like the
+# HA token: values never leave the server) and serves plain event lists.
+GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+GOOGLE_EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
+
+_google_oauth_states = {}  # state -> expiry timestamp (CSRF protection)
+_google_access = {'token': None, 'expiry': 0.0}
+_google_events_cache = {'at': 0.0, 'events': None}
+_GOOGLE_EVENTS_TTL = 60
+
+
+def _google_client():
+    return {
+        'id': (server_settings.get('google_client_id', '')
+               or os.getenv('GOOGLE_CLIENT_ID', '') or '').strip(),
+        'secret': (server_settings.get('google_client_secret', '')
+                   or os.getenv('GOOGLE_CLIENT_SECRET', '') or '').strip(),
+    }
+
+
+def _google_refresh_token():
+    return (server_settings.get('google_refresh_token', '') or '').strip()
+
+
+def _google_redirect_uri():
+    return f'{request.host_url.rstrip("/")}/api/google/callback'
+
+
+def _google_fetch_access_token():
+    """Valid access token, refreshing transparently. Returns (token, error)."""
+    import requests
+    import time as time_module
+    if _google_access['token'] and time_module.time() < _google_access['expiry'] - 30:
+        return _google_access['token'], None
+    client = _google_client()
+    refresh = _google_refresh_token()
+    if not client['id'] or not client['secret']:
+        return None, 'Google client ID/secret not configured (Studio > System > Google Calendar)'
+    if not refresh:
+        return None, 'Google account not connected (Studio > System > Google Calendar > Connect)'
+    try:
+        response = requests.post(GOOGLE_TOKEN_URL, data={
+            'client_id': client['id'],
+            'client_secret': client['secret'],
+            'refresh_token': refresh,
+            'grant_type': 'refresh_token',
+        }, timeout=15)
+    except Exception as error:
+        return None, f'Token refresh failed: {error}'
+    if response.status_code != 200:
+        return None, 'Google authorization expired - reconnect (Studio > System > Google Calendar)'
+    data = response.json()
+    _google_access['token'] = data.get('access_token')
+    _google_access['expiry'] = time_module.time() + int(data.get('expires_in', 3600))
+    if not _google_access['token']:
+        return None, 'Google did not return an access token'
+    return _google_access['token'], None
+
+
+def _google_event_display(start):
+    """Pre-format an event start for the CYD screen (it has no clock)."""
+    from datetime import datetime as datetime_cls
+    date_only = start.get('date')
+    date_time = start.get('dateTime')
+    try:
+        if date_only:
+            day = datetime_cls.strptime(date_only, '%Y-%m-%d').date()
+            today = datetime_cls.now().date()
+            delta = (day - today).days
+            if delta == 0:
+                return 'Today', day.isoformat()
+            if delta == 1:
+                return 'Tmrw', day.isoformat()
+            return day.strftime('%d %b'), day.isoformat()
+        if date_time:
+            moment = datetime_cls.fromisoformat(date_time.replace('Z', '+00:00'))
+            now = datetime_cls.now(moment.tzinfo)
+            label = moment.strftime('%H:%M')
+            if moment.date() == now.date():
+                return label, moment.isoformat()
+            if (moment.date() - now.date()).days == 1:
+                return f'Tmrw {label}', moment.isoformat()
+            return moment.strftime('%d %b %H:%M'), moment.isoformat()
+    except (ValueError, TypeError):
+        pass
+    return '', ''
+
+
+def _google_events(limit=10):
+    """Normalized upcoming events. Returns (events, error)."""
+    import requests
+    import time as time_module
+    from datetime import datetime as datetime_cls, timezone
+    cached = _google_events_cache['events']
+    if cached is not None and time_module.time() - _google_events_cache['at'] < _GOOGLE_EVENTS_TTL:
+        return list(cached)[:limit], None
+    token, error = _google_fetch_access_token()
+    if error:
+        return None, error
+    try:
+        now_utc = datetime_cls.now(timezone.utc).isoformat()
+        response = requests.get(GOOGLE_EVENTS_URL, params={
+            'singleEvents': 'true',
+            'orderBy': 'startTime',
+            'timeMin': now_utc,
+            'maxResults': str(max(1, min(limit, 25))),
+        }, headers={'Authorization': f'Bearer {token}'}, timeout=15)
+    except Exception as error:
+        return None, f'Calendar request failed: {error}'
+    if response.status_code != 200:
+        return None, 'Google Calendar request failed - reconnect if it persists'
+    events = []
+    for item in response.json().get('items', []):
+        when, _ = _google_event_display(item.get('start', {}))
+        events.append({
+            'summary': (item.get('summary') or '(no title)').strip(),
+            'when': when,
+            'location': (item.get('location') or '').strip(),
+        })
+    _google_events_cache['at'] = time_module.time()
+    _google_events_cache['events'] = events
+    return list(events)[:limit], None
+
+
+@app.route('/api/google/status', methods=['GET'])
+def google_status():
+    """Connection state for Studio (no secrets exposed)."""
+    return jsonify({
+        'success': True,
+        'connected': bool(_google_refresh_token()),
+        'client_configured': bool(_google_client()['id']),
+    })
+
+
+@app.route('/api/google/auth-url', methods=['GET'])
+def google_auth_url():
+    """Consent URL for the Connect flow (opened in the browser)."""
+    import secrets
+    import time as time_module
+    from urllib.parse import urlencode
+    client = _google_client()
+    if not client['id']:
+        return jsonify({'success': False,
+                        'error': 'Set the Google client ID first (Studio > System > Google Calendar)'}), 400
+    state = secrets.token_urlsafe(24)
+    _google_oauth_states[state] = time_module.time() + 600
+    params = urlencode({
+        'client_id': client['id'],
+        'redirect_uri': _google_redirect_uri(),
+        'response_type': 'code',
+        'scope': GOOGLE_SCOPE,
+        'access_type': 'offline',
+        'prompt': 'consent',
+        'state': state,
+    })
+    return jsonify({'success': True, 'url': f'{GOOGLE_AUTH_URL}?{params}'})
+
+
+@app.route('/api/google/callback')
+def google_callback():
+    """OAuth landing page: Google redirects here, we store the refresh token."""
+    import requests
+    import time as time_module
+    code = (request.args.get('code') or '').strip()
+    state = (request.args.get('state') or '').strip()
+    error = request.args.get('error') or ''
+    expiry = _google_oauth_states.pop(state, 0)
+    if error:
+        return _google_callback_page(False, f'Google refused: {error}')
+    if not state or expiry < time_module.time():
+        return _google_callback_page(False, 'Expired or unknown login attempt - try Connect again')
+    if not code:
+        return _google_callback_page(False, 'No authorization code received')
+    client = _google_client()
+    try:
+        response = requests.post(GOOGLE_TOKEN_URL, data={
+            'client_id': client['id'],
+            'client_secret': client['secret'],
+            'code': code,
+            'redirect_uri': _google_redirect_uri(),
+            'grant_type': 'authorization_code',
+        }, timeout=15)
+    except Exception as error:
+        return _google_callback_page(False, f'Token exchange failed: {error}')
+    if response.status_code != 200:
+        return _google_callback_page(False, 'Google rejected the code - check client ID/secret')
+    data = response.json()
+    refresh = (data.get('refresh_token') or '').strip()
+    if not refresh:
+        return _google_callback_page(False, 'Google gave no refresh token - remove app access and Connect again')
+    global server_settings
+    server_settings['google_refresh_token'] = refresh
+    _persist_server_settings(server_settings)
+    _google_access['token'] = data.get('access_token')
+    _google_access['expiry'] = time_module.time() + int(data.get('expires_in', 3600))
+    _google_events_cache['events'] = None
+    return _google_callback_page(True, 'Google Calendar connected - you can close this tab')
+
+
+def _google_callback_page(success, message):
+    color = '#28a745' if success else '#dc3545'
+    title = 'Connected' if success else 'Failed'
+    safe = (message or '').replace('&', '&amp;').replace('<', '&lt;')
+    return (f'<!doctype html><html><body style="font-family:sans-serif;text-align:center;padding:60px">'
+            f'<h1 style="color:{color}">NexusDeck: {title}</h1><p>{safe}</p>'
+            f'</body></html>')
+
+
+@app.route('/api/google/disconnect', methods=['POST'])
+def google_disconnect():
+    """Forget the Google tokens on this PC."""
+    global server_settings
+    server_settings.pop('google_refresh_token', None)
+    _persist_server_settings(server_settings)
+    _google_access['token'] = None
+    _google_access['expiry'] = 0.0
+    _google_events_cache['events'] = None
+    return jsonify({'success': True, 'message': 'Google Calendar disconnected'})
+
+
+@app.route('/api/google/events', methods=['GET'])
+def google_events():
+    """Upcoming events for the ESP32 screen and the web simulator."""
+    try:
+        limit = int(request.args.get('limit', '10'))
+    except (TypeError, ValueError):
+        limit = 10
+    events, error = _google_events(limit)
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+    return jsonify({'success': True, 'events': events})
+
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 def handle_settings():
     global server_settings
@@ -1542,7 +1782,8 @@ def handle_settings():
         allowed = {'ha_url', 'ha_token', 'server_port', 'auto_sync',
                    'home_city', 'home_country', 'home_lat', 'home_lon',
                    'prayer_method', 'clock_analog', 'show_temp',
-                   'show_prayer', 'show_date', 'brightness', 'home_slots'}
+                   'show_prayer', 'show_date', 'brightness', 'home_slots',
+                   'google_client_id', 'google_client_secret'}
         for key, value in data.items():
             if key == 'home_slots' and isinstance(value, list):
                 cleaned = [str(item).strip() for item in value[:4]
@@ -2195,6 +2436,15 @@ def execute_action():
                 'latency': latency,
                 'error': None if success else message
             }), (200 if success else 400)
+
+        elif action_type == 'calendar':
+            events, error = _google_events(5)
+            if error:
+                return jsonify({'success': False, 'error': error}), 400
+            first = events[0] if events else None
+            message = (f"{first['when']} - {first['summary']}" if first
+                       else 'No upcoming events')
+            return jsonify({'success': True, 'message': message, 'events': events})
 
         elif action_type == 'http_check':
             success, message, status = execute_http_check(

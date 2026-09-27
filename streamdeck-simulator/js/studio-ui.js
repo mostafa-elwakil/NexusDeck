@@ -298,6 +298,7 @@ class StudioUI {
                             <option value="ping">Ping Host</option>
                             <option value="docker_command">Docker Command</option>
                             <option value="switch_profile">Switch Profile (Cycle)</option>
+                            <option value="calendar">Calendar (Google)</option>
                             <option value="macro">Macro (multi-step)</option>
                             <option value="widget">Live Widget</option>
                         </select>
@@ -423,6 +424,21 @@ class StudioUI {
                     </div>
                     <button id="btn-quit-server" class="btn btn-secondary" type="button" style="flex: none;">Quit</button>
                 </div>
+                <div class="system-row" style="display: block;">
+                    <div class="system-label">📅 Google Calendar</div>
+                    <div class="system-hint" id="google-status-line">Not connected</div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <input type="text" id="google-client-id" class="form-control" placeholder="Client ID" style="flex: 1; min-width: 0;">
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 6px;">
+                        <input type="password" id="google-client-secret" class="form-control" placeholder="Client secret (saved on server only)" style="flex: 1; min-width: 0;">
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                        <button id="btn-google-save" class="btn btn-secondary" type="button" style="flex: 1;">💾 Save</button>
+                        <button id="btn-google-connect" class="btn btn-secondary" type="button" style="flex: 1;">🔗 Connect</button>
+                        <button id="btn-google-disconnect" class="btn btn-secondary" type="button" style="flex: 1;">⏏ Forget</button>
+                    </div>
+                </div>
                 <div class="system-status" id="system-status-line"></div>
             </div>
         `;
@@ -452,6 +468,90 @@ class StudioUI {
         } catch (error) {
             if (status) status.textContent = `System status unavailable: ${error.message}`;
             if (toggle) toggle.disabled = true;
+        }
+        await this.loadGoogleState();
+    }
+
+    async loadGoogleState() {
+        const line = document.getElementById('google-status-line');
+        const idInput = document.getElementById('google-client-id');
+        try {
+            const [statusRes, settingsRes] = await Promise.all([
+                fetch(`${this.actions.serverUrl}/api/google/status`),
+                fetch(`${this.actions.serverUrl}/api/settings`),
+            ]);
+            const status = await statusRes.json();
+            const settings = (await settingsRes.json()).settings || {};
+            if (idInput && !idInput.value) {
+                idInput.value = settings.google_client_id || '';
+            }
+            if (line) {
+                line.textContent = status.connected
+                    ? '✅ Connected — ESP buttons can show events'
+                    : (status.client_configured
+                        ? 'Client saved — press Connect to link your account'
+                        : 'Not connected — paste Client ID + secret, Save, Connect');
+            }
+        } catch (error) {
+            if (line) line.textContent = `Google status unavailable: ${error.message}`;
+        }
+    }
+
+    async saveGoogleClient() {
+        const id = document.getElementById('google-client-id')?.value.trim() || '';
+        const secret = document.getElementById('google-client-secret')?.value.trim() || '';
+        if (!id) {
+            this.showToast('Paste the Google client ID first', 3000);
+            return;
+        }
+        const patch = { google_client_id: id };
+        if (secret) patch.google_client_secret = secret;
+        const response = await fetch(`${this.actions.serverUrl}/api/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+        });
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to save Google client');
+        }
+        const secretInput = document.getElementById('google-client-secret');
+        if (secretInput) secretInput.value = '';
+        this.showToast('Google client saved');
+        await this.loadGoogleState();
+    }
+
+    async connectGoogle() {
+        try {
+            await this.saveGoogleClient();
+        } catch (error) {
+            this.showToast(error.message, 3000);
+            return;
+        }
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/google/auth-url`);
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to start Google login');
+            }
+            window.open(result.url, '_blank', 'noopener,noreferrer');
+            this.showToast('Approve in the Google tab, then reopen System to refresh', 4000);
+        } catch (error) {
+            this.showToast(error.message, 3000);
+        }
+    }
+
+    async disconnectGoogle() {
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/google/disconnect`, { method: 'POST' });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to disconnect');
+            }
+            this.showToast('Google Calendar disconnected');
+            await this.loadGoogleState();
+        } catch (error) {
+            this.showToast(error.message, 3000);
         }
     }
 
@@ -677,6 +777,22 @@ class StudioUI {
             } finally {
                 this.loadSystemState();
             }
+        });
+
+        document.getElementById('btn-google-save')?.addEventListener('click', async () => {
+            try {
+                await this.saveGoogleClient();
+            } catch (error) {
+                this.showToast(error.message, 3000);
+            }
+        });
+
+        document.getElementById('btn-google-connect')?.addEventListener('click', () => {
+            this.connectGoogle();
+        });
+
+        document.getElementById('btn-google-disconnect')?.addEventListener('click', () => {
+            this.disconnectGoogle();
         });
 
         document.getElementById('btn-quit-server')?.addEventListener('click', async () => {
@@ -1076,6 +1192,8 @@ class StudioUI {
                 return { label: action.dockerAction || 'Docker', icon: '🐳' };
             case 'macro':
                 return { label: 'Macro', icon: '⚙️' };
+            case 'calendar':
+                return { label: 'Calendar', icon: '📅' };
             default:
                 return { label: titleCase(action.type) || 'Action', icon: '⚙️' };
         }
@@ -1336,6 +1454,12 @@ class StudioUI {
                     </select>
                 </div>
                 <p class="text-muted" style="font-size: 12px; color: #888;">Pick a profile to jump to, or cycle through all.</p>
+            `,
+            'calendar': `
+                <div class="form-group">
+                    <label>Google Calendar</label>
+                    <p class="text-muted" style="font-size: 12px; color: #888;">Tap shows upcoming events on the ESP32 screen. Connect once in ⚙ System → Google Calendar.</p>
+                </div>
             `,
             'macro': `
                 <div class="form-group">
@@ -1915,6 +2039,7 @@ class StudioUI {
                 container: document.getElementById('action-container').value
             }),
             'switch_profile': () => ({ type: 'switch_profile', name: document.getElementById('action-profile-name').value }),
+            'calendar': () => ({ type: 'calendar' }),
             'macro': () => {
                 const steps = [];
                 document.querySelectorAll('#macro-steps-list .macro-step').forEach((row) => {
