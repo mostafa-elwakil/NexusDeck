@@ -82,6 +82,19 @@ describe('suggestLabelIcon', () => {
     });
 });
 
+describe('profileNames', () => {
+    it('dedupes and drops empties', () => {
+        const names = StudioUI.prototype.profileNames.call(
+            makeCtx(['B', 'A', 'B', '']));
+        assert.deepEqual(names, ['B', 'A']);
+    });
+
+    it('handles missing manager', () => {
+        assert.deepEqual(
+            StudioUI.prototype.profileNames.call({}), []);
+    });
+});
+
 describe('keyComboFromEvent', () => {
     const combo = (event) => StudioUI.prototype.keyComboFromEvent.call({}, event);
 

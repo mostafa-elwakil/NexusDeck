@@ -615,6 +615,20 @@ class StudioUI {
 
         this.deck.container.addEventListener('profile:profileLoaded', () => {
             this.refreshProfilesList();
+            this.refreshHomeSlots();
+        });
+
+        ['profileSaved', 'profileCreated', 'profileDeleted', 'profileImported'].forEach((eventName) => {
+            this.deck.container.addEventListener(`profile:${eventName}`, () => {
+                this.refreshProfilesList();
+                this.refreshHomeSlots();
+            });
+        });
+
+        this.deck.container.addEventListener('profile:profileRenamed', (e) => {
+            this.refreshProfilesList();
+            const { oldName, newName } = e.detail || {};
+            this.refreshHomeSlots(oldName && newName ? { [oldName]: newName } : null);
         });
 
         document.getElementById('btn-clear-history')?.addEventListener('click', () => {
@@ -2013,6 +2027,26 @@ class StudioUI {
         this.refreshHomePreview();
     }
 
+    profileNames() {
+        const names = (this.profiles?.profiles || []).map((p) => p?.name).filter(Boolean);
+        return [...new Set(names)];
+    }
+
+    fillSlotSelect(select, names, current) {
+        select.innerHTML = '<option value="">— auto (first profiles) —</option>' + names.map((name) =>
+            `<option value="${this.escapeHtml(name)}"${name === current ? ' selected' : ''}>${this.escapeHtml(name)}</option>`
+        ).join('');
+        if (current && !names.includes(current)) {
+            const extra = document.createElement('option');
+            extra.value = current;
+            extra.textContent = `${current} (missing)`;
+            extra.selected = true;
+            select.appendChild(extra);
+        } else {
+            select.value = current || '';
+        }
+    }
+
     async loadHomeSlots(savedSlots = []) {
         const selects = [0, 1, 2, 3].map((i) => document.getElementById(`home-slot-${i}`));
         if (selects.some((el) => !el)) return;
@@ -2027,20 +2061,26 @@ class StudioUI {
             console.warn('Failed to load profile names', error);
         }
         if (!names.length) {
-            names = this.profiles.getAllProfiles().map((profile) => profile.name);
+            names = this.profileNames();
         }
         selects.forEach((select, i) => {
-            const current = savedSlots[i] || names[i] || '';
-            select.innerHTML = '<option value="">— auto (first profiles) —</option>' + names.map((name) =>
-                `<option value="${this.escapeHtml(name)}"${name === current ? ' selected' : ''}>${this.escapeHtml(name)}</option>`
-            ).join('');
-            if (current && !names.includes(current)) {
-                const extra = document.createElement('option');
-                extra.value = current;
-                extra.textContent = current;
-                extra.selected = true;
-                select.appendChild(extra);
+            this.fillSlotSelect(select, names, savedSlots[i] || names[i] || '');
+        });
+    }
+
+    refreshHomeSlots(renameMap = null) {
+        // Rebuild slot dropdowns from the live profile list whenever
+        // profiles change — never clobber the user's current picks.
+        const selects = [0, 1, 2, 3].map((i) => document.getElementById(`home-slot-${i}`));
+        if (selects.some((el) => !el)) return;
+        const names = this.profileNames();
+        if (!names.length) return;
+        selects.forEach((select) => {
+            let current = select.value || '';
+            if (renameMap && renameMap[current]) {
+                current = renameMap[current];
             }
+            this.fillSlotSelect(select, names, current);
         });
     }
 

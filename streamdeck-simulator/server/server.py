@@ -1966,6 +1966,11 @@ def set_profile():
 
     current_profile = data
     _persist_profile(current_profile)
+    # Remember every pushed profile by name so a later switch by name
+    # opens the customized version, not the pristine preset file.
+    if _valid_stored_profile(current_profile):
+        known_profiles[current_profile['name']] = current_profile
+        _persist_profiles_store()
 
     return jsonify({
         'success': True,
@@ -1990,6 +1995,9 @@ def set_background():
 
     current_profile['backgroundColor'] = color
     _persist_profile(current_profile)
+    if _valid_stored_profile(current_profile):
+        known_profiles[current_profile['name']] = current_profile
+        _persist_profiles_store()
 
     return jsonify({
         'success': True,
@@ -2006,8 +2014,45 @@ def set_esp_ip():
     return jsonify({'success': True})
 
 
+PROFILES_STORE_FILE = os.path.join(STATE_DIR, 'profiles_store.json')
+
+
+def _valid_stored_profile(profile):
+    return (isinstance(profile, dict) and isinstance(profile.get('name'), str)
+            and profile.get('name') and isinstance(profile.get('buttons'), list))
+
+
+def _load_profiles_store():
+    """All customized profiles remembered by name (survive restarts)."""
+    try:
+        if os.path.exists(PROFILES_STORE_FILE):
+            with open(PROFILES_STORE_FILE, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                return {name: profile for name, profile in data.items()
+                        if _valid_stored_profile(profile)}
+    except Exception:
+        pass
+    return {}
+
+
+def _persist_profiles_store():
+    try:
+        _atomic_write_json(PROFILES_STORE_FILE, known_profiles)
+    except Exception as error:
+        log_request('ERROR', f'persist profiles store: {str(error)}')
+
+
+known_profiles = _load_profiles_store()
+if _valid_stored_profile(current_profile):
+    known_profiles.setdefault(current_profile['name'], current_profile)
+    _persist_profiles_store()
+
+
 def _list_all_profiles():
-    """Ordered profile list: current profile first (if not a preset file), then presets sorted by filename."""
+    """Ordered profile list: remembered customizations override same-named
+    presets, then remaining presets sorted by filename. The live current
+    profile always wins so a switch by name never opens a stale default."""
     presets_dir = os.path.join(SIMULATOR_DIR, 'presets')
     preset_files = sorted([f for f in os.listdir(presets_dir) if f.endswith('.json')]) if os.path.exists(presets_dir) else []
 
@@ -2019,8 +2064,22 @@ def _list_all_profiles():
         except Exception:
             pass
 
-    if not any(p.get('name') == current_profile.get('name') for p in all_profiles):
-        all_profiles.insert(0, current_profile)
+    for name, profile in known_profiles.items():
+        for index, existing in enumerate(all_profiles):
+            if existing.get('name') == name:
+                all_profiles[index] = profile
+                break
+        else:
+            all_profiles.append(profile)
+
+    current_name = current_profile.get('name', '')
+    if current_name and _valid_stored_profile(current_profile):
+        for index, existing in enumerate(all_profiles):
+            if existing.get('name') == current_name:
+                all_profiles[index] = current_profile
+                break
+        else:
+            all_profiles.insert(0, current_profile)
     return all_profiles
 
 
