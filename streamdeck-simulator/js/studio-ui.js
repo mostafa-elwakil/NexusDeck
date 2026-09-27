@@ -425,6 +425,19 @@ class StudioUI {
                     <button id="btn-quit-server" class="btn btn-secondary" type="button" style="flex: none;">Quit</button>
                 </div>
                 <div class="system-row" style="display: block;">
+                    <div class="system-label">🔒 LAN Security (pairing token)</div>
+                    <div class="system-hint" id="api-token-status-line">Checking…</div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <input type="password" id="api-token-input" class="form-control" placeholder="Paste API token (phones / LAN browsers)" style="flex: 1; min-width: 0;">
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                        <button id="btn-token-save" class="btn btn-secondary" type="button" style="flex: 1;">💾 Save</button>
+                        <button id="btn-token-copy" class="btn btn-secondary" type="button" style="flex: 1;">📋 Copy</button>
+                        <button id="btn-token-regen" class="btn btn-secondary" type="button" style="flex: 1;" title="Works on this PC; re-pair ESP + phones after">🎲 New token</button>
+                    </div>
+                    <div class="system-hint" style="margin-top: 6px;">ESP: paste the token in the NexusDeck-Setup portal → API token. Same-PC browsers need nothing.</div>
+                </div>
+                <div class="system-row" style="display: block;">
                     <div class="system-label">📅 Google Calendar</div>
                     <div class="system-hint" id="google-status-line">Not connected</div>
                     <div style="display: flex; gap: 6px; margin-top: 8px;">
@@ -474,6 +487,81 @@ class StudioUI {
             if (toggle) toggle.disabled = true;
         }
         await this.loadGoogleState();
+        await this.loadSecurityState();
+    }
+
+    async loadSecurityState() {
+        const line = document.getElementById('api-token-status-line');
+        const input = document.getElementById('api-token-input');
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/auth/status`);
+            const status = await response.json();
+            const saved = (localStorage.getItem('nexusdeck_api_token') || '').trim();
+            if (input && !input.value && saved) {
+                input.value = saved;
+            }
+            if (line) {
+                if (status.loopback) {
+                    line.textContent = 'This browser is trusted (same PC). Phones + ESP need the token below.';
+                } else if (saved) {
+                    line.textContent = 'Token saved in this browser — API calls authenticated.';
+                } else {
+                    line.textContent = '⚠️ Paste the API token below (get it from this PC).';
+                }
+            }
+        } catch (error) {
+            if (line) line.textContent = `Security status unavailable: ${error.message}`;
+        }
+    }
+
+    saveApiToken() {
+        const input = document.getElementById('api-token-input');
+        const token = (input?.value || '').trim();
+        if (!token) {
+            localStorage.removeItem('nexusdeck_api_token');
+            this.showToast('Token cleared in this browser');
+        } else {
+            localStorage.setItem('nexusdeck_api_token', token);
+            this.showToast('Token saved — retry your action');
+        }
+        this.loadSecurityState();
+    }
+
+    async copyApiToken() {
+        const input = document.getElementById('api-token-input');
+        const token = (input?.value || '').trim()
+            || (localStorage.getItem('nexusdeck_api_token') || '').trim();
+        if (!token) {
+            this.showToast('No token to copy — paste or regenerate one first', 3000);
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(token);
+            this.showToast('Token copied — paste it into the ESP portal');
+        } catch (error) {
+            input?.select?.();
+            this.showToast('Copy manually (clipboard blocked)', 3000);
+        }
+    }
+
+    async regenerateApiToken() {
+        if (!confirm('Generate a NEW API token? Re-pair the ESP and phones afterwards.')) {
+            return;
+        }
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/auth/regenerate`, { method: 'POST' });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Regenerate failed (needs this PC)');
+            }
+            localStorage.setItem('nexusdeck_api_token', result.api_token);
+            const input = document.getElementById('api-token-input');
+            if (input) input.value = result.api_token;
+            this.showToast('New token active — re-pair your devices');
+            this.loadSecurityState();
+        } catch (error) {
+            this.showToast(error.message, 3000);
+        }
     }
 
     async loadGoogleState() {
@@ -792,6 +880,18 @@ class StudioUI {
             } finally {
                 this.loadSystemState();
             }
+        });
+
+        document.getElementById('btn-token-save')?.addEventListener('click', () => {
+            this.saveApiToken();
+        });
+
+        document.getElementById('btn-token-copy')?.addEventListener('click', () => {
+            this.copyApiToken();
+        });
+
+        document.getElementById('btn-token-regen')?.addEventListener('click', () => {
+            this.regenerateApiToken();
         });
 
         document.getElementById('btn-google-save')?.addEventListener('click', async () => {

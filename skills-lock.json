@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "babysit-pr": {
+      "source": "amElnagdy/review-skills",
+      "sourceType": "github",
+      "skillPath": "skills/babysit-pr/SKILL.md",
+      "computedHash": "9c7aedf9b441ccc6b2072ab60f1697c53f91b528678ea0d2b3df136e1b716794"
+    },
+    "debate-review": {
+      "source": "amElnagdy/review-skills",
+      "sourceType": "github",
+      "skillPath": "skills/debate-review/SKILL.md",
+      "computedHash": "ec5582ce4afdd76faed1edad793125b53be0026d433363993df831acffe762f5"
+    }
+  }
+}

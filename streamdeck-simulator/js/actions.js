@@ -3,6 +3,31 @@
  * Handles execution of various action types: system commands, macros, navigation, etc.
  */
 
+// Attach the LAN pairing token (if the user saved one) to every same-server
+// /api call. Installed once at module load so all fetches are covered.
+(function installApiTokenHook() {
+    if (typeof window === 'undefined' || !window.fetch || window.fetch.__nexusTokenHook) return;
+    const originalFetch = window.fetch.bind(window);
+    const hook = (url, options = {}) => {
+        try {
+            const target = typeof url === 'string' ? url : url?.url || '';
+            const token = window.localStorage?.getItem('nexusdeck_api_token') || '';
+            if (token && /^https?:\/\/[^/]+\/api\//.test(target)) {
+                options = options || {};
+                const headers = options.headers;
+                if (headers && typeof headers.set === 'function') {
+                    headers.set('X-NexusDeck-Token', token);
+                } else {
+                    options = { ...options, headers: { ...(headers || {}), 'X-NexusDeck-Token': token } };
+                }
+            }
+        } catch (error) { /* never break fetching */ }
+        return originalFetch(url, options);
+    };
+    hook.__nexusTokenHook = true;
+    window.fetch = hook;
+})();
+
 class ActionsEngine {
     constructor(deckCore, options = {}) {
         this.deck = deckCore;

@@ -29,6 +29,7 @@ Preferences preferences;
 String serverIP = "";
 String bgColorHex = "#1a1a2e";
 bool bgColorCustom = false;
+String apiToken = "";
 
 void loadSettings() {
     preferences.begin("deck", false);
@@ -39,6 +40,8 @@ void loadSettings() {
         bgColorHex = "#1a1a2e";
     }
     bgColorCustom = preferences.getBool("bg_custom", false);
+    apiToken = preferences.getString("api_token", "");
+    apiToken.trim();
     preferences.end();
 }
 
@@ -47,6 +50,23 @@ void saveIP(String ip) {
     preferences.putString("srv_ip", ip);
     preferences.end();
     serverIP = ip;
+}
+
+void saveApiToken(String token) {
+    token.trim();
+    preferences.begin("deck", false);
+    preferences.putString("api_token", token);
+    preferences.end();
+    apiToken = token;
+}
+
+// Begin an authenticated server request (LAN pairing token + client id).
+void espHttpBegin(HTTPClient& client, const String& url) {
+    client.begin(url);
+    client.addHeader("X-NexusDeck-Client", "esp32");
+    if (apiToken.length() > 0) {
+        client.addHeader("X-NexusDeck-Token", apiToken);
+    }
 }
 
 #define TOUCH_CS 33
@@ -533,6 +553,8 @@ void openSetupPortal() {
 
     WiFiManagerParameter custom_server_ip("server_ip", "Server URL (e.g. http://192.168.1.5:8765)", serverIP.c_str(), 60);
     wm.addParameter(&custom_server_ip);
+    WiFiManagerParameter custom_api_token("api_token", "API token (Studio > System > Security)", apiToken.c_str(), 64);
+    wm.addParameter(&custom_api_token);
     WiFiManagerParameter custom_bg_color("bg_color", "Background color (pick from the list)", bgColorHex.c_str(), 8, "type=\"color\"");
     wm.addParameter(&custom_bg_color);
     WiFiManagerParameter custom_bg_follow("bg_follow", "Follow profile background instead", "1", 2, "type=\"checkbox\"");
@@ -554,6 +576,12 @@ void openSetupPortal() {
             newIP += ":8765";
         }
         saveIP(newIP);
+    }
+
+    String newToken = custom_api_token.getValue();
+    if (newToken.length() > 0) {
+        saveApiToken(newToken);
+        Serial.println("API token saved");
     }
 
     String followBg = custom_bg_follow.getValue();
@@ -601,6 +629,8 @@ void setupWiFi() {
 
     WiFiManagerParameter custom_server_ip("server_ip", "Server URL (e.g. http://192.168.1.5:8765)", serverIP.c_str(), 60);
     wm.addParameter(&custom_server_ip);
+    WiFiManagerParameter custom_api_token("api_token", "API token (Studio > System > Security)", apiToken.c_str(), 64);
+    wm.addParameter(&custom_api_token);
     WiFiManagerParameter custom_bg_color("bg_color", "Background color (pick from the list)", bgColorHex.c_str(), 8, "type=\"color\"");
     wm.addParameter(&custom_bg_color);
     WiFiManagerParameter custom_bg_follow("bg_follow", "Follow profile background instead", "1", 2, "type=\"checkbox\"");
@@ -633,6 +663,12 @@ void setupWiFi() {
             newIP += ":8765";
         }
         saveIP(newIP);
+    }
+
+    String newToken = custom_api_token.getValue();
+    if (newToken.length() > 0) {
+        saveApiToken(newToken);
+        Serial.println("API token saved");
     }
 
     String followBg = custom_bg_follow.getValue();
@@ -926,7 +962,7 @@ void executeButtonAction(uint8_t index) {
         String jsonPayload;
         serializeJson(doc, jsonPayload);
 
-        http.begin(url);
+        espHttpBegin(http, url);
         http.addHeader("Content-Type", "application/json");
         int httpCode = http.POST(jsonPayload);
         http.end();
@@ -937,6 +973,9 @@ void executeButtonAction(uint8_t index) {
             drawButton(index);
             syncProfile();
         } else {
+            if (httpCode == 401) {
+                Serial.println("API token rejected - set it in the NexusDeck-Setup portal");
+            }
             setButtonState(index, 4);
             drawButton(index);
         }
@@ -979,7 +1018,7 @@ void executeButtonAction(uint8_t index) {
     Serial.println(jsonPayload);
 
     http.setTimeout(20000);
-    http.begin(url);
+    espHttpBegin(http, url);
     http.addHeader("Content-Type", "application/json");
 
     int httpCode = http.POST(jsonPayload);
@@ -999,6 +1038,9 @@ void executeButtonAction(uint8_t index) {
     } else {
         Serial.print("Action failed with code: ");
         Serial.println(httpCode);
+        if (httpCode == 401) {
+            Serial.println("API token rejected - set it in the NexusDeck-Setup portal");
+        }
         Serial.print("Action response: ");
         Serial.println(responseBody);
         setButtonState(index, 4); // Error state
@@ -1016,8 +1058,15 @@ void syncProfile() {
     String url = String(SERVER_URL) + "/api/health";
 
     http.setTimeout(8000);
-    http.begin(url);
+    espHttpBegin(http, url);
     int httpCode = http.GET();
+
+    if (httpCode == 401) {
+        Serial.println("API token rejected - set it in the NexusDeck-Setup portal");
+        serverAvailable = false;
+        http.end();
+        return;
+    }
 
     if (httpCode == 200) {
         serverAvailable = true;
@@ -1025,8 +1074,7 @@ void syncProfile() {
 
         // Get profile data
         http.end();
-        http.begin(String(SERVER_URL) + "/api/get-profile");
-        http.addHeader("X-NexusDeck-Client", "esp32");
+        espHttpBegin(http, String(SERVER_URL) + "/api/get-profile");
         httpCode = http.GET();
 
         if (httpCode == 200) {
@@ -1275,7 +1323,7 @@ void updateWidgets() {
 
 void updateSystemStats() {
     HTTPClient statsHttp;
-    statsHttp.begin(String(SERVER_URL) + "/api/system-stats");
+    espHttpBegin(statsHttp, String(SERVER_URL) + "/api/system-stats");
     int httpCode = statsHttp.GET();
 
     if (httpCode == 200) {
@@ -1580,8 +1628,7 @@ void openCalendarPage() {
 
     HTTPClient h;
     h.setTimeout(10000);
-    h.begin(String(SERVER_URL) + "/api/google/events?limit=8");
-    h.addHeader("X-NexusDeck-Client", "esp32");
+    espHttpBegin(h, String(SERVER_URL) + "/api/google/events?limit=8");
     if (h.GET() != 200) {
         calError = "Server error";
         h.end();
@@ -1754,8 +1801,7 @@ void fetchProfileNames() {
     if (!wifiConnected) return;
     HTTPClient h;
     h.setTimeout(5000);
-    h.begin(String(SERVER_URL) + "/api/profiles");
-    h.addHeader("X-NexusDeck-Client", "esp32");
+    espHttpBegin(h, String(SERVER_URL) + "/api/profiles");
     if (h.GET() == 200) {
         DynamicJsonDocument doc(2048);
         if (!deserializeJson(doc, h.getString())) {
@@ -1783,8 +1829,7 @@ void fetchHomeInfo(bool force) {
     lastHomeInfoFetch = millis();
     HTTPClient h;
     h.setTimeout(8000);
-    h.begin(String(SERVER_URL) + "/api/home-info");
-    h.addHeader("X-NexusDeck-Client", "esp32");
+    espHttpBegin(h, String(SERVER_URL) + "/api/home-info");
     if (h.GET() != 200) {
         h.end();
         return;
@@ -1958,7 +2003,7 @@ void switchToHomeProfile(uint8_t slot) {
     String payload;
     serializeJson(doc, payload);
     http.setTimeout(10000);
-    http.begin(url);
+    espHttpBegin(http, url);
     http.addHeader("Content-Type", "application/json");
     int code = http.POST(payload);
     http.end();

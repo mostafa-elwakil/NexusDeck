@@ -16,6 +16,7 @@ import platform
 import os
 import json
 import re
+import secrets
 import sys
 import time
 import threading
@@ -24,7 +25,7 @@ import base64
 
 app = Flask(__name__)
 # CORS enabled with restrictions for security
-CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', 'http://*.local:*', '127.0.0.1'])
+CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', '127.0.0.1'])
 
 # Server configuration
 SERVER_VERSION = '2.3.4'
@@ -289,6 +290,71 @@ def rate_limit(f):
         return f(*args, **kwargs)
     
     return decorated_function
+
+# ===== LAN security: API token (pairing) =====
+# Same-PC browsers (loopback) are trusted. Anything else on the LAN must
+# present the token (header X-NexusDeck-Token or ?token=). The ESP32 gets
+# it once via its setup portal; phones paste it once in Studio.
+def _is_loopback():
+    addr = request.remote_addr or ''
+    return addr == '::1' or addr.startswith('127.')
+
+
+def _api_token():
+    return (server_settings.get('api_token', '') or '').strip()
+
+
+def _ensure_api_token():
+    token = _api_token()
+    if not token:
+        token = secrets.token_urlsafe(32)
+        server_settings['api_token'] = token
+        _persist_server_settings(server_settings)
+        log_request('AUTH', 'generated new API token')
+    return token
+
+
+def _require_api_token(view):
+    """Reject non-loopback /api calls without the pairing token (401)."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if _is_loopback():
+            return view(*args, **kwargs)
+        expected = _api_token()
+        provided = (request.headers.get('X-NexusDeck-Token', '')
+                    or request.args.get('token', '')).strip()
+        if expected and provided and secrets.compare_digest(provided, expected):
+            return view(*args, **kwargs)
+        log_request('AUTH', f"rejected {request.remote_addr} {request.path}")
+        return jsonify({'success': False,
+                        'error': 'Unauthorized - API token required'}), 401
+    return wrapper
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    """Public: does this client need a token? (for Studio token prompt)."""
+    return jsonify({'success': True, 'loopback': _is_loopback(),
+                    'token_configured': bool(_api_token())})
+
+
+@app.route('/api/auth/regenerate', methods=['POST'])
+@_require_api_token
+def auth_regenerate():
+    """Rotate the pairing token. Loopback always allowed; LAN needs the old one."""
+    if not _is_loopback():
+        expected = _api_token()
+        provided = (request.headers.get('X-NexusDeck-Token', '')
+                    or request.args.get('token', '')).strip()
+        if not (expected and provided and secrets.compare_digest(provided, expected)):
+            return jsonify({'success': False,
+                            'error': 'Unauthorized - API token required'}), 401
+    new_token = secrets.token_urlsafe(32)
+    server_settings['api_token'] = new_token
+    _persist_server_settings(server_settings)
+    log_request('AUTH', 'API token regenerated')
+    return jsonify({'success': True, 'api_token': new_token})
+
 
 def validate_app_name(app_name):
     """Validate application name format"""
@@ -682,6 +748,8 @@ def _public_settings():
     public.pop('google_client_secret', None)
     public.pop('google_refresh_token', None)
     public.pop('gcal_ical_url', None)
+    public['api_token_configured'] = bool(_api_token())
+    public.pop('api_token', None)
     return public
 
 
@@ -1018,6 +1086,7 @@ def _list_installed_apps():
 
 @app.route('/api/installed-apps', methods=['GET'])
 @rate_limit
+@_require_api_token
 def installed_apps():
     """Programs installed on this PC for the Studio open_app picker."""
     log_request('GET /api/installed-apps')
@@ -1033,6 +1102,7 @@ def installed_apps():
 
 @app.route('/api/system-stats', methods=['GET'])
 @rate_limit
+@_require_api_token
 def get_system_stats():
     """Get current system resource usage"""
     log_request('GET /api/system-stats')
@@ -1068,6 +1138,7 @@ def get_system_stats():
 
 @app.route('/api/obs-control', methods=['POST'])
 @rate_limit
+@_require_api_token
 def obs_control():
     """Control OBS through its OBS WebSocket 5 server."""
     data = request.get_json(silent=True) or {}
@@ -1076,6 +1147,7 @@ def obs_control():
 
 @app.route('/api/obs-status', methods=['POST'])
 @rate_limit
+@_require_api_token
 def obs_status():
     """Check OBS WebSocket connectivity and current recording state."""
     data = request.get_json(silent=True) or {}
@@ -1116,6 +1188,7 @@ def obs_status():
 
 @app.route('/api/open-app', methods=['POST'])
 @rate_limit
+@_require_api_token
 def open_application():
     """Open an application"""
     data = request.json
@@ -1141,6 +1214,7 @@ def open_application():
 
 @app.route('/api/keypress', methods=['POST'])
 @rate_limit
+@_require_api_token
 def keypress():
     """Send a keyboard shortcut (e.g. {"keys": "ctrl+c"})"""
     data = request.json
@@ -1165,6 +1239,7 @@ def keypress():
 
 @app.route('/api/ha-control', methods=['POST'])
 @rate_limit
+@_require_api_token
 def ha_control():
     """Call a Home Assistant service (token comes from server env, never the client)"""
     data = request.json
@@ -1187,6 +1262,7 @@ def ha_control():
 
 @app.route('/api/ha-status', methods=['POST'])
 @rate_limit
+@_require_api_token
 def ha_status():
     """Check Home Assistant connectivity and token validity"""
     data = request.json or {}
@@ -1204,6 +1280,7 @@ def ha_status():
 
 @app.route('/api/run-command', methods=['POST'])
 @rate_limit
+@_require_api_token
 def run_command():
     """Execute a shell command"""
     data = request.json
@@ -1275,6 +1352,7 @@ def run_command():
 
 @app.route('/api/ping', methods=['POST'])
 @rate_limit
+@_require_api_token
 def ping_host():
     """Ping a host and return latency"""
     data = request.json
@@ -1337,6 +1415,7 @@ def ping_host():
 
 @app.route('/api/http-proxy', methods=['POST'])
 @rate_limit
+@_require_api_token
 def http_proxy():
     """HTTP proxy to bypass CORS restrictions"""
     data = request.json
@@ -1518,6 +1597,7 @@ def _record_esp32_sync(profile):
 
 
 @app.route('/api/get-profile', methods=['GET'])
+@_require_api_token
 def get_profile():
     """Get current profile for ESP32 synchronization"""
     log_request('GET /api/get-profile')
@@ -1918,6 +1998,7 @@ def _calendar_events(limit=10):
 
 
 @app.route('/api/google/status', methods=['GET'])
+@_require_api_token
 def google_status():
     """Connection state for Studio (no secrets exposed)."""
     ical_configured = bool((server_settings.get('gcal_ical_url', '') or '').strip())
@@ -1931,6 +2012,7 @@ def google_status():
 
 
 @app.route('/api/google/auth-url', methods=['GET'])
+@_require_api_token
 def google_auth_url():
     """Consent URL for the Connect flow (opened in the browser)."""
     import secrets
@@ -2005,6 +2087,7 @@ def _google_callback_page(success, message):
 
 
 @app.route('/api/google/disconnect', methods=['POST'])
+@_require_api_token
 def google_disconnect():
     """Forget the Google tokens on this PC."""
     global server_settings
@@ -2017,6 +2100,7 @@ def google_disconnect():
 
 
 @app.route('/api/google/events', methods=['GET'])
+@_require_api_token
 def google_events():
     """Upcoming events for the ESP32 screen and the web simulator."""
     try:
@@ -2030,6 +2114,7 @@ def google_events():
 
 
 @app.route('/api/settings', methods=['GET', 'POST'])
+@_require_api_token
 def handle_settings():
     global server_settings
     log_request(f'{request.method} /api/settings')
@@ -2218,6 +2303,7 @@ def set_autostart(enabled):
 
 @app.route('/api/system/autostart', methods=['GET', 'POST'])
 @rate_limit
+@_require_api_token
 def system_autostart():
     """Query or toggle 'run in background at login' for this computer."""
     log_request(f'{request.method} /api/system/autostart')
@@ -2246,6 +2332,7 @@ def system_autostart():
 
 @app.route('/api/system/exit', methods=['POST'])
 @rate_limit
+@_require_api_token
 def system_exit():
     """Shut the companion server down (local control from the web UI)."""
     log_request('POST /api/system/exit')
@@ -2353,6 +2440,7 @@ def _home_next_prayer():
 
 
 @app.route('/api/home-info', methods=['GET'])
+@_require_api_token
 def home_info():
     """Aggregated ESP32 home-page data: server time/date, outside temp, next prayer."""
     log_request('GET /api/home-info')
@@ -2387,6 +2475,7 @@ def home_info():
 
 @app.route('/api/ha-entities', methods=['GET'])
 @rate_limit
+@_require_api_token
 def ha_entities():
     """List Home Assistant entities (trimmed), optionally filtered by domain."""
     log_request('GET /api/ha-entities')
@@ -2421,6 +2510,7 @@ def ha_entities():
 
 @app.route('/api/device-status', methods=['GET'])
 @rate_limit
+@_require_api_token
 def device_status():
     """Report companion + ESP32 hardware sync status for the web UI."""
     log_request('GET /api/device-status')
@@ -2451,6 +2541,7 @@ def device_status():
     })
 
 @app.route('/api/set-profile', methods=['POST'])
+@_require_api_token
 def set_profile():
     """Update current profile from web interface"""
     global current_profile
@@ -2479,6 +2570,7 @@ def set_profile():
 
 
 @app.route('/api/set-background', methods=['POST'])
+@_require_api_token
 def set_background():
     """Update ESP32 deck background color on the active profile."""
     global current_profile
@@ -2505,6 +2597,7 @@ def set_background():
     })
 
 @app.route('/api/set-esp-ip', methods=['POST'])
+@_require_api_token
 def set_esp_ip():
     data = request.json
     esp_ip = data.get('ip')
@@ -2584,6 +2677,7 @@ def _list_all_profiles():
 
 
 @app.route('/api/profiles', methods=['GET'])
+@_require_api_token
 def list_profiles():
     """Ordered profile names for the ESP32 home page (P1-P4 buttons)."""
     log_request('GET /api/profiles')
@@ -2611,6 +2705,7 @@ def list_profiles():
 
 @app.route('/api/execute-action', methods=['POST'])
 @rate_limit
+@_require_api_token
 def execute_action():
     """Execute action triggered from ESP32 or web interface"""
     data = request.json
@@ -2901,6 +2996,7 @@ if __name__ == '__main__':
     print("=" * 70)
 
     _ensure_single_instance()
+    _ensure_api_token()
 
     try:
         app.run(

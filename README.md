@@ -264,6 +264,22 @@ Tap a **Calendar** button on the ESP32 to see upcoming events on its screen (or 
 
 Secrets/tokens stay on this PC only (like the HA token). **Forget** disconnects the OAuth login anytime.
 
+## LAN Security (Pairing Token)
+
+Every `/api/*` endpoint (except health check) requires auth:
+- **Same-PC browsers are trusted automatically** (loopback needs nothing).
+- **ESP32 + phones + other LAN devices** must send the pairing token
+  (`X-NexusDeck-Token` header). Pair once:
+  1. On the PC open Studio → **⚙ System → LAN Security** → copy the token
+     (🎲 New token rotates it; same-PC only).
+  2. ESP: join **NexusDeck-Setup** WiFi → paste into **API token** → save.
+  3. Phones: paste once in the same System section (remembered per browser).
+- Without the token the server answers **401** (and logs the rejected IP).
+  The ESP prints "API token rejected" hints to Serial.
+- Run only on a trusted network: traffic is plain HTTP (the token stops
+  other LAN clients, not passive eavesdroppers). Secrets live in
+  `%APPDATA%\NexusDeck\server_settings.json` (user-private folder).
+
 ## Tests
 
 Regression tests guard the persistence fixes (settings must survive restarts):
