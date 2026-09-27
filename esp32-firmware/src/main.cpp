@@ -955,12 +955,10 @@ void executeButtonAction(uint8_t index) {
 
     if (btn.actionType == "calendar") {
         Serial.println("Opening Google Calendar...");
-        setButtonState(index, 2);
-        drawButton(index);
+        // The page itself is the feedback: never paint the grid button
+        // (or its scheduled reset) over the open page.
         openCalendarPage();
-        setButtonState(index, 3);
-        drawButton(index);
-        scheduleButtonReset(index, 600);
+        setButtonState(index, 0);
         return;
     }
 
