@@ -1657,10 +1657,14 @@ def _google_events(limit=10):
     events = []
     for item in response.json().get('items', []):
         when, _ = _google_event_display(item.get('start', {}))
+        end_when, _ = _google_event_display(item.get('end', {}))
+        description = (item.get('description') or '').strip().replace('\r', '')
         events.append({
             'summary': (item.get('summary') or '(no title)').strip(),
             'when': when,
+            'end': end_when,
             'location': (item.get('location') or '').strip(),
+            'description': description[:200],
         })
     _google_events_cache['at'] = time_module.time()
     _google_events_cache['events'] = events
@@ -1821,6 +1825,7 @@ def _ical_parse_events(ics_text):
         end = _ical_parse_datetime(ends[0][1], ends[0][0]) if ends else None
         summary = _ical_unescape(props.get('SUMMARY', [(None, '')])[0][1])
         location = _ical_unescape(props.get('LOCATION', [(None, '')])[0][1])
+        description = _ical_unescape(props.get('DESCRIPTION', [(None, '')])[0][1])[:200]
         excluded = set()
         for ex_params, ex_val in props.get('EXDATE', []):
             for piece in ex_val.split(','):
@@ -1852,13 +1857,24 @@ def _ical_parse_events(ics_text):
                     continue
                 if occ_cmp > now_cmp + timedelta(days=_ICAL_WINDOW_DAYS):
                     continue
-                occurrences.append((occ_cmp, summary, location, occurrence))
+                end_label, _ = _google_event_display({'dateTime': end_cmp.isoformat()})
+                occurrences.append((occ_cmp, summary, location, occurrence,
+                                    end_label, description))
             else:
                 if occurrence < now.date() or occurrence > (now + timedelta(days=_ICAL_WINDOW_DAYS)).date():
                     continue
+                multi_end = ''
+                if end and not isinstance(end, datetime_cls):
+                    try:
+                        last_day = end - timedelta(days=1)  # DTEND is exclusive
+                        if last_day > occurrence:
+                            multi_end, _ = _google_event_display(
+                                {'date': last_day.isoformat()})
+                    except (ValueError, TypeError, AttributeError):
+                        multi_end = ''
                 occurrences.append((datetime_cls.combine(
                     occurrence, datetime_cls.min.time()).astimezone(),
-                    summary, location, occurrence))
+                    summary, location, occurrence, multi_end, description))
     occurrences.sort(key=lambda item: item[0])
     return occurrences
 
@@ -1879,14 +1895,15 @@ def _ical_events(ical_url, limit=10):
         return None, 'Calendar feed unreachable (check the iCal URL)'
     from datetime import datetime as datetime_cls
     normalized = []
-    for _, summary, location, original in _ical_parse_events(response.text):
+    for _, summary, location, original, end_label, description in _ical_parse_events(response.text):
         if isinstance(original, datetime_cls):
             start = {'dateTime': original.isoformat()}
         else:
             start = {'date': original.isoformat()}
         when, _ = _google_event_display(start)
         normalized.append({'summary': summary or '(no title)',
-                           'when': when, 'location': location})
+                           'when': when, 'end': end_label,
+                           'location': location, 'description': description})
     _google_events_cache['at'] = time_module.time()
     _google_events_cache['events'] = normalized
     return list(normalized)[:limit], None

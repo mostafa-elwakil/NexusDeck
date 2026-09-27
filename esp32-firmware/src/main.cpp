@@ -147,11 +147,15 @@ bool calPageActive = false;
 unsigned long calOpenedAt = 0;
 struct CalEvent {
     String when;
+    String end;
     String summary;
+    String location;
+    String desc;
 };
 CalEvent calEvents[8];
 uint8_t calCount = 0;
 String calError = "";
+int8_t calDetail = -1; // -1 = list, else event index
 
 // Pomodoro dedicated page state
 bool pomoPageActive = false;
@@ -1470,7 +1474,55 @@ void closePomoPage() {
 }
 
 // ===== Google Calendar events page =====
+void drawCalDetail(uint8_t index) {
+    CalEvent& ev = calEvents[index];
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("EVENT", SCREEN_WIDTH / 2, 12, 2);
+    tft.drawFastHLine(10, 28, SCREEN_WIDTH - 20, TFT_DARKGREY);
+
+    tft.setTextColor(TFT_CYAN, deckBackgroundColor);
+    tft.drawString(truncateText(ev.summary, 24), SCREEN_WIDTH / 2, 42, 2);
+    String range = ev.when;
+    if (ev.end.length() > 0) range += " - " + ev.end;
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString(truncateText(range, 26), SCREEN_WIDTH / 2, 62, 2);
+    int y = 82;
+    if (ev.location.length() > 0) {
+        tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+        tft.drawString(truncateText(String("LOC: ") + ev.location, 34), SCREEN_WIDTH / 2, y, 1);
+        y += 16;
+    }
+    // Greedy word-wrap of the description into at most 6 lines
+    String rest = ev.desc;
+    rest.replace("\n", " ");
+    rest.replace("\r", " ");
+    for (uint8_t line = 0; line < 6 && rest.length() > 0; line++) {
+        String chunk = rest;
+        if (chunk.length() > 34) {
+            int cut = 34;
+            while (cut > 20 && chunk.charAt(cut) != ' ') cut--;
+            if (chunk.charAt(cut) != ' ') cut = 34;
+            chunk = rest.substring(0, cut);
+            rest = rest.substring(cut);
+            rest.trim();
+        } else {
+            rest = "";
+        }
+        tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+        tft.drawString(chunk, SCREEN_WIDTH / 2, y, 1);
+        y += 15;
+    }
+    tft.setTextColor(TFT_DARKGREY, deckBackgroundColor);
+    tft.drawString("tap: back", SCREEN_WIDTH / 2, 228, 1);
+}
+
 void drawCalendarPage() {
+    if (calDetail >= 0 && calDetail < calCount) {
+        drawCalDetail((uint8_t)calDetail);
+        return;
+    }
     tft.fillScreen(deckBackgroundColor);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, deckBackgroundColor);
@@ -1515,6 +1567,7 @@ void openCalendarPage() {
     calOpenedAt = millis();
     calCount = 0;
     calError = "";
+    calDetail = -1;
     ignoreTouchUntil = millis() + 400;
     if (!wifiConnected) {
         calError = "No WiFi";
@@ -1537,7 +1590,7 @@ void openCalendarPage() {
         drawCalendarPage();
         return;
     }
-    DynamicJsonDocument doc(4096);
+    DynamicJsonDocument doc(8192);
     if (deserializeJson(doc, h.getString())) {
         calError = "Bad response";
         h.end();
@@ -1555,7 +1608,10 @@ void openCalendarPage() {
     JsonArray items = doc["events"];
     for (uint8_t i = 0; i < 8 && i < items.size(); i++) {
         calEvents[i].when = items[i]["when"] | "";
+        calEvents[i].end = items[i]["end"] | "";
         calEvents[i].summary = items[i]["summary"] | "";
+        calEvents[i].location = items[i]["location"] | "";
+        calEvents[i].desc = items[i]["description"] | "";
         calCount++;
     }
     drawCalendarPage();
@@ -1574,8 +1630,25 @@ void handleCalTouch() {
     if (millis() < ignoreTouchUntil) return;
     static unsigned long calTouchDebounce = 0;
     if (millis() < calTouchDebounce) return;
+    TS_Point p = touch.getPoint();
+    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
     calTouchDebounce = millis() + 300;
     ignoreTouchUntil = millis() + 400;
+    if (calDetail >= 0) {
+        calDetail = -1; // detail -> back to list
+        drawCalendarPage();
+        return;
+    }
+    // Tap a row to open its details, tap elsewhere to close
+    uint8_t shown = calCount > 7 ? 7 : calCount;
+    for (uint8_t i = 0; i < shown; i++) {
+        int rowY = 44 + i * 24;
+        if (y >= rowY - 12 && y <= rowY + 12) {
+            calDetail = i;
+            drawCalendarPage();
+            return;
+        }
+    }
     closeCalendarPage();
 }
 

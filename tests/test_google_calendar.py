@@ -112,8 +112,9 @@ class EventsTest(unittest.TestCase):
 
 class CalendarActionTest(unittest.TestCase):
     def test_action_returns_next_event(self):
-        payload = [{'summary': 'Lunch', 'when': '12:30', 'location': ''}]
-        with mock.patch.object(server, '_google_events',
+        payload = [{'summary': 'Lunch', 'when': '12:30', 'location': '',
+                    'end': '', 'description': ''}]
+        with mock.patch.object(server, '_calendar_events',
                                return_value=(payload, None)):
             client = server.app.test_client()
             response = client.post('/api/execute-action', json={

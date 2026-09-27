@@ -443,8 +443,11 @@ class ActionsEngine {
         if (!response.ok || !result.success) {
             throw new Error(result.error || 'Failed to load calendar events');
         }
-        const lines = (result.events || []).map((event) =>
-            `${event.when} - ${event.summary}`);
+        const lines = (result.events || []).map((event) => {
+            const range = event.end ? `${event.when} - ${event.end}` : event.when;
+            const place = event.location ? ` @ ${event.location}` : '';
+            return `${range} - ${event.summary}${place}`;
+        });
         this.showNotification('Upcoming Events',
             lines.length ? lines.join('\n') : 'No upcoming events');
     }
