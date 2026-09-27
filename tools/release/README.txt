@@ -9,7 +9,8 @@ QUICK START (portable, no install)
 
 FULL INSTALL
   Windows: run NexusDeck-Setup-*-windows-x64.exe (per-user, no
-  admin needed). Optional: desktop icon + start automatically at logon.
+  admin needed). Creates a desktop icon with the NexusDeck logo
+  (untick in setup to skip) + optional start automatically at logon.
   Linux:   ./install.sh [--enable-background] [--uninstall]
   installs to ~/.local (app menu entry + optional login service).
 

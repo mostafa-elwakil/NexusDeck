@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=NexusDeck
-Comment=NexusDeck Companion
+Comment=NexusDeck Companion - Stream Deck simulator server
 Exec=@APP_DIR@/run-nexusdeck.sh
-Terminal=true
+Icon=@APP_DIR@/nexusdeck.png
+Terminal=false
 Categories=Utility;
 StartupNotify=false
+StartupWMClass=nexusdeck

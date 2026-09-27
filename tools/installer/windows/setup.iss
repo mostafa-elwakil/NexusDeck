@@ -31,16 +31,16 @@ UninstallDisplayIcon={app}\NexusDeckCompanion.exe
 ; profile_state.json and server_settings.json are left in {app}.
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 Name: "startup"; Description: "Start NexusDeck automatically at Windows logon (runs in background)"; GroupDescription: "Background:"
 
 [Files]
 Source: "{#StagingDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
-Name: "{group}\Open NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"
+Name: "{group}\Open NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"; IconFilename: "{app}\nexusdeck.ico"
 Name: "{group}\Uninstall NexusDeck"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"; Tasks: desktopicon
+Name: "{autodesktop}\NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"; IconFilename: "{app}\nexusdeck.ico"; Tasks: desktopicon
 Name: "{userstartup}\NexusDeck"; Filename: "{app}\NexusDeckCompanion.exe"; Parameters: "--minimized"; Tasks: startup
 
 [Run]

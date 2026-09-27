@@ -43,6 +43,7 @@ jobs:
           Copy-Item dist/NexusDeckCompanion.exe pkg/
           Copy-Item ../../tools/release/Run-NexusDeck.bat pkg/
           Copy-Item ../../tools/release/README.txt pkg/
+          Copy-Item assets/nexusdeck.ico pkg/
           $zip = "NexusDeck-$ver-windows-x64.zip"
           Compress-Archive -Path pkg/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash + "  $zip" | Out-File "$zip.sha256" -Encoding ascii
@@ -85,6 +86,7 @@ jobs:
           cp dist/NexusDeckCompanion pkg/
           cp ../../tools/release/run-nexusdeck.sh ../../tools/release/README.txt pkg/
           cp ../../tools/installer/linux/install.sh ../../tools/installer/linux/nexusdeck.desktop pkg/
+          cp assets/nexusdeck-blue.png pkg/nexusdeck.png
           chmod +x pkg/NexusDeckCompanion pkg/run-nexusdeck.sh pkg/install.sh
           tarball="NexusDeck-$ver-linux-x64.tar.gz"
           tar -czf "$tarball" -C pkg .
