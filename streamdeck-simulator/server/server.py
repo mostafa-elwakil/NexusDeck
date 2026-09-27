@@ -673,10 +673,15 @@ def _public_settings():
     public['ha_token_configured'] = bool(server_settings.get('ha_token')
                                          or os.getenv('HA_TOKEN', ''))
     public.pop('ha_token', None)
-    public['google_connected'] = bool(_google_refresh_token())
+    ical_configured = bool((server_settings.get('gcal_ical_url', '') or '').strip())
+    public['google_connected'] = bool(_google_refresh_token()) or ical_configured
     public['google_client_configured'] = bool(_google_client()['id'])
+    public['gcal_ical_configured'] = ical_configured
+    public['gcal_method'] = ('ical' if ical_configured
+                             else ('oauth' if public['google_connected'] else 'none'))
     public.pop('google_client_secret', None)
     public.pop('google_refresh_token', None)
+    public.pop('gcal_ical_url', None)
     return public
 
 
@@ -1662,12 +1667,248 @@ def _google_events(limit=10):
     return list(events)[:limit], None
 
 
+# ===== Calendar via secret iCal URL (no Cloud Console needed) =====
+# Google Calendar > Settings > Integrate calendar > "Secret address in
+# iCal format". Paste it in Studio and events flow with zero OAuth setup.
+_ICAL_WINDOW_DAYS = 60
+_ICAL_MAX_OCCURRENCES = 60
+
+
+def _ical_unescape(text):
+    return (text or '').replace('\\N', '\n').replace('\\n', '\n').replace('\\,', ',') \
+        .replace('\\;', ';').replace('\\\\', '\\').strip()
+
+
+def _ical_parse_datetime(value, params):
+    """Parse an ICS date value into date/datetime (aware when possible)."""
+    from datetime import datetime as datetime_cls
+    value = (value or '').strip()
+    if not value:
+        return None
+    if params.get('VALUE') == 'DATE' or (len(value) == 8 and 'T' not in value):
+        try:
+            return datetime_cls.strptime(value[:8], '%Y%m%d').date()
+        except ValueError:
+            return None
+    tzinfo = None
+    tzid = params.get('TZID')
+    if value.endswith('Z'):
+        from datetime import timezone
+        tzinfo = timezone.utc
+        value = value[:-1]
+    elif tzid:
+        try:
+            from zoneinfo import ZoneInfo
+            tzinfo = ZoneInfo(tzid)
+        except Exception:
+            tzinfo = None
+    for fmt in ('%Y%m%dT%H%M%S', '%Y%m%dT%H%M'):
+        try:
+            parsed = datetime_cls.strptime(value[:15] if len(value) > 14 else value, fmt)
+            return parsed.replace(tzinfo=tzinfo) if tzinfo else parsed
+        except ValueError:
+            continue
+    return None
+
+
+def _ical_parse_rrule(value):
+    rule = {}
+    for part in (value or '').split(';'):
+        if '=' in part:
+            key, _, val = part.partition('=')
+            rule[key.strip().upper()] = val.strip()
+    return rule
+
+
+def _ical_aware(moment, reference):
+    """Compare datetimes safely: naive wall time = server-local time."""
+    from datetime import datetime as datetime_cls
+    if isinstance(moment, datetime_cls) and moment.tzinfo is None:
+        moment = moment.astimezone()
+    if isinstance(reference, datetime_cls) and reference.tzinfo is None:
+        reference = reference.astimezone()
+    return moment, reference
+
+
+def _ical_expand(start, rule):
+    """Occurrence start datetimes for simple DAILY/WEEKLY/MONTHLY rules."""
+    from datetime import timedelta
+    from datetime import datetime as datetime_cls
+    freq = rule.get('FREQ', '').upper()
+    if freq not in ('DAILY', 'WEEKLY', 'MONTHLY'):
+        return [start]
+    try:
+        interval = max(1, int(rule.get('INTERVAL', '1')))
+    except ValueError:
+        interval = 1
+    try:
+        count = int(rule.get('COUNT', '0')) or None
+    except ValueError:
+        count = None
+    until = None
+    if rule.get('UNTIL'):
+        until = _ical_parse_datetime(rule['UNTIL'], {})
+        if isinstance(until, datetime_cls) and start.tzinfo and not until.tzinfo:
+            until = until.replace(tzinfo=start.tzinfo)
+    step = {'DAILY': timedelta(days=interval),
+            'WEEKLY': timedelta(weeks=interval),
+            'MONTHLY': None}[freq]
+    occurrences = []
+    current = start
+    guard = 0
+    while guard < _ICAL_MAX_OCCURRENCES:
+        guard += 1
+        if until is not None and current > until:
+            break
+        occurrences.append(current)
+        if count is not None and len(occurrences) >= count:
+            break
+        if freq == 'MONTHLY':
+            month = current.month + interval
+            year = current.year + (month - 1) // 12
+            month = (month - 1) % 12 + 1
+            try:
+                current = current.replace(year=year, month=month)
+            except ValueError:
+                break
+        else:
+            current = current + step
+    return occurrences
+
+
+def _ical_parse_events(ics_text):
+    """Parse ICS into (sort_key, summary, location, start_dict) occurrences."""
+    from datetime import datetime as datetime_cls, timedelta
+    text = (ics_text or '').replace('\r\n', '\n').replace('\r', '\n')
+    unfolded = []
+    for line in text.split('\n'):
+        if line[:1] in (' ', '\t') and unfolded:
+            unfolded[-1] += line[1:]
+        else:
+            unfolded.append(line)
+    events = []
+    in_event = False
+    props = {}
+    for line in unfolded:
+        if line == 'BEGIN:VEVENT':
+            in_event = True
+            props = {}
+        elif line == 'END:VEVENT':
+            if in_event:
+                events.append(props)
+            in_event = False
+        elif in_event and ':' in line:
+            head, _, val = line.partition(':')
+            parts = head.split(';')
+            name = parts[0].upper()
+            params = {}
+            for extra in parts[1:]:
+                if '=' in extra:
+                    key, _, pval = extra.partition('=')
+                    params[key.upper()] = pval
+            props.setdefault(name, []).append((params, val))
+    now = datetime_cls.now().astimezone()
+    occurrences = []
+    for props in events:
+        starts = props.get('DTSTART', [])
+        if not starts:
+            continue
+        params, raw_start = starts[0]
+        start = _ical_parse_datetime(raw_start, params)
+        if start is None:
+            continue
+        ends = props.get('DTEND', [])
+        end = _ical_parse_datetime(ends[0][1], ends[0][0]) if ends else None
+        summary = _ical_unescape(props.get('SUMMARY', [(None, '')])[0][1])
+        location = _ical_unescape(props.get('LOCATION', [(None, '')])[0][1])
+        excluded = set()
+        for ex_params, ex_val in props.get('EXDATE', []):
+            for piece in ex_val.split(','):
+                parsed = _ical_parse_datetime(piece, ex_params)
+                if parsed is not None:
+                    excluded.add(parsed)
+        overridden = set()
+        for rec_params, rec_val in props.get('RECURRENCE-ID', []):
+            parsed = _ical_parse_datetime(rec_val, rec_params)
+            if parsed is not None:
+                overridden.add(parsed)
+        starts_list = [start]
+        rrules = props.get('RRULE', [])
+        if rrules and not isinstance(start, datetime_cls):
+            pass  # all-day recurrence unsupported, keep single
+        elif rrules:
+            starts_list = _ical_expand(start, _ical_parse_rrule(rrules[0][1]))
+        duration = None
+        if isinstance(start, datetime_cls) and isinstance(end, datetime_cls):
+            duration = end - start
+        for occurrence in starts_list:
+            if occurrence in excluded or occurrence in overridden:
+                continue
+            if isinstance(occurrence, datetime_cls):
+                occ_end = occurrence + duration if duration else occurrence + timedelta(hours=1)
+                occ_cmp, now_cmp = _ical_aware(occurrence, now)
+                end_cmp, now_cmp = _ical_aware(occ_end, now_cmp)
+                if end_cmp < now_cmp - timedelta(minutes=60):
+                    continue
+                if occ_cmp > now_cmp + timedelta(days=_ICAL_WINDOW_DAYS):
+                    continue
+                occurrences.append((occ_cmp, summary, location, occurrence))
+            else:
+                if occurrence < now.date() or occurrence > (now + timedelta(days=_ICAL_WINDOW_DAYS)).date():
+                    continue
+                occurrences.append((datetime_cls.combine(
+                    occurrence, datetime_cls.min.time()).astimezone(),
+                    summary, location, occurrence))
+    occurrences.sort(key=lambda item: item[0])
+    return occurrences
+
+
+def _ical_events(ical_url, limit=10):
+    """Fetch a secret iCal feed and normalize upcoming events."""
+    import requests
+    import time as time_module
+    cached = _google_events_cache['events']
+    if cached is not None and time_module.time() - _google_events_cache['at'] < _GOOGLE_EVENTS_TTL:
+        return list(cached)[:limit], None
+    try:
+        response = requests.get(ical_url, timeout=20,
+                                headers={'User-Agent': 'NexusDeck/1.0'})
+    except Exception as error:
+        return None, f'Calendar feed failed: {error}'
+    if response.status_code != 200:
+        return None, 'Calendar feed unreachable (check the iCal URL)'
+    from datetime import datetime as datetime_cls
+    normalized = []
+    for _, summary, location, original in _ical_parse_events(response.text):
+        if isinstance(original, datetime_cls):
+            start = {'dateTime': original.isoformat()}
+        else:
+            start = {'date': original.isoformat()}
+        when, _ = _google_event_display(start)
+        normalized.append({'summary': summary or '(no title)',
+                           'when': when, 'location': location})
+    _google_events_cache['at'] = time_module.time()
+    _google_events_cache['events'] = normalized
+    return list(normalized)[:limit], None
+
+
+def _calendar_events(limit=10):
+    """Upcoming events: secret iCal URL first (no setup), OAuth fallback."""
+    ical_url = (server_settings.get('gcal_ical_url', '') or '').strip()
+    if ical_url:
+        return _ical_events(ical_url, limit)
+    return _google_events(limit)
+
+
 @app.route('/api/google/status', methods=['GET'])
 def google_status():
     """Connection state for Studio (no secrets exposed)."""
+    ical_configured = bool((server_settings.get('gcal_ical_url', '') or '').strip())
+    oauth = bool(_google_refresh_token())
     return jsonify({
         'success': True,
-        'connected': bool(_google_refresh_token()),
+        'connected': oauth or ical_configured,
+        'method': 'ical' if ical_configured else ('oauth' if oauth else 'none'),
         'client_configured': bool(_google_client()['id']),
     })
 
@@ -1765,7 +2006,7 @@ def google_events():
         limit = int(request.args.get('limit', '10'))
     except (TypeError, ValueError):
         limit = 10
-    events, error = _google_events(limit)
+    events, error = _calendar_events(limit)
     if error:
         return jsonify({'success': False, 'error': error}), 400
     return jsonify({'success': True, 'events': events})
@@ -1783,7 +2024,8 @@ def handle_settings():
                    'home_city', 'home_country', 'home_lat', 'home_lon',
                    'prayer_method', 'clock_analog', 'show_temp',
                    'show_prayer', 'show_date', 'brightness', 'home_slots',
-                   'google_client_id', 'google_client_secret'}
+                   'google_client_id', 'google_client_secret',
+                   'gcal_ical_url'}
         for key, value in data.items():
             if key == 'home_slots' and isinstance(value, list):
                 cleaned = [str(item).strip() for item in value[:4]
@@ -2438,7 +2680,7 @@ def execute_action():
             }), (200 if success else 400)
 
         elif action_type == 'calendar':
-            events, error = _google_events(5)
+            events, error = _calendar_events(5)
             if error:
                 return jsonify({'success': False, 'error': error}), 400
             first = events[0] if events else None

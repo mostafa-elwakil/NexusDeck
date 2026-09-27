@@ -428,7 +428,11 @@ class StudioUI {
                     <div class="system-label">📅 Google Calendar</div>
                     <div class="system-hint" id="google-status-line">Not connected</div>
                     <div style="display: flex; gap: 6px; margin-top: 8px;">
-                        <input type="text" id="google-client-id" class="form-control" placeholder="Client ID" style="flex: 1; min-width: 0;">
+                        <input type="text" id="gcal-ical-url" class="form-control" placeholder="Secret iCal URL (easiest — no setup)" style="flex: 1; min-width: 0;">
+                    </div>
+                    <div class="system-hint" style="margin-top: 4px;">Google Calendar → ⚙ Settings → Integrate calendar → Secret iCal address</div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <input type="text" id="google-client-id" class="form-control" placeholder="Client ID (advanced: OAuth)" style="flex: 1; min-width: 0;">
                     </div>
                     <div style="display: flex; gap: 6px; margin-top: 6px;">
                         <input type="password" id="google-client-secret" class="form-control" placeholder="Client secret (saved on server only)" style="flex: 1; min-width: 0;">
@@ -486,11 +490,13 @@ class StudioUI {
                 idInput.value = settings.google_client_id || '';
             }
             if (line) {
-                line.textContent = status.connected
-                    ? '✅ Connected — ESP buttons can show events'
-                    : (status.client_configured
-                        ? 'Client saved — press Connect to link your account'
-                        : 'Not connected — paste Client ID + secret, Save, Connect');
+                line.textContent = status.method === 'ical'
+                    ? '✅ Connected via calendar link — ESP buttons can show events'
+                    : (status.connected
+                        ? '✅ Connected via Google login — ESP buttons can show events'
+                        : (status.client_configured
+                            ? 'Client saved — press Connect to link your account'
+                            : 'Not connected — paste the secret iCal URL and Save'));
             }
         } catch (error) {
             if (line) line.textContent = `Google status unavailable: ${error.message}`;
@@ -500,12 +506,21 @@ class StudioUI {
     async saveGoogleClient() {
         const id = document.getElementById('google-client-id')?.value.trim() || '';
         const secret = document.getElementById('google-client-secret')?.value.trim() || '';
-        if (!id) {
-            this.showToast('Paste the Google client ID first', 3000);
+        const icalUrl = document.getElementById('gcal-ical-url')?.value.trim() || '';
+        const patch = {};
+        if (icalUrl) {
+            if (!/^https?:\/\//i.test(icalUrl)) {
+                this.showToast('The calendar link must start with http(s)://', 3000);
+                return;
+            }
+            patch.gcal_ical_url = icalUrl;
+        }
+        if (id) patch.google_client_id = id;
+        if (secret) patch.google_client_secret = secret;
+        if (!Object.keys(patch).length) {
+            this.showToast('Paste the secret iCal URL first (easiest)', 3000);
             return;
         }
-        const patch = { google_client_id: id };
-        if (secret) patch.google_client_secret = secret;
         const response = await fetch(`${this.actions.serverUrl}/api/settings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -250,13 +250,19 @@ Optional keys: `home_lat` / `home_lon` (skip geocoding), `prayer_method` (0–15
 
 ## Google Calendar Setup
 
-Tap a **Calendar** button on the ESP32 to see upcoming events on its screen (or test in the web simulator). One-time setup:
+Tap a **Calendar** button on the ESP32 to see upcoming events on its screen (or test in the web simulator). Two ways to connect (in Studio: **⚙ System → Google Calendar**):
 
+**Easy (recommended): secret calendar link — no setup.**
+1. Open [Google Calendar](https://calendar.google.com/) → ⚙ Settings → your calendar → **Integrate calendar** → copy the **Secret address in iCal format**.
+2. Paste it in Studio and **Save**. Done — events (including recurring) flow within a minute.
+
+**Advanced: Google login (OAuth).**
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → create a project → enable the **Google Calendar API**.
 2. **APIs & Services → OAuth consent screen** → External → fill app name/email → add scope `.../auth/calendar.readonly` → add yourself as test user.
 3. **Credentials → Create Credentials → OAuth client ID** → type **Web application** → add redirect URI `http://localhost:8765/api/google/callback` (match your server port).
-4. In Studio open **⚙ System → Google Calendar**: paste Client ID + Client secret → **Save** → **Connect** → approve in the Google tab.
-5. Tokens stay on this PC only (like the HA token). **Forget** disconnects anytime.
+4. Paste Client ID + Client secret → **Save** → **Connect** → approve in the Google tab.
+
+Secrets/tokens stay on this PC only (like the HA token). **Forget** disconnects the OAuth login anytime.
 
 ## Tests
 

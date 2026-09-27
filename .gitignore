@@ -49,4 +49,5 @@ esp32-firmware/include/config.h
 *.tmp
 *.temp
 .cache/
-ing
+ing/
+tests/
