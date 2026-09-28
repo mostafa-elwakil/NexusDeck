@@ -25,18 +25,30 @@ def _free_port():
 
 
 class StateDirTest(unittest.TestCase):
-    def test_uses_appdata_on_windows(self):
+    def test_env_override_wins(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {'APPDATA': tmp}):
+            custom = os.path.join(tmp, 'MyState')
+            with mock.patch.dict(os.environ, {'NEXUSDECK_DATA_DIR': custom}):
                 with mock.patch('platform.system', return_value='Windows'):
                     result = server._user_state_dir()
-        self.assertTrue(result.startswith(tmp), result)
-        self.assertTrue(result.endswith('NexusDeck'), result)
+        self.assertEqual(result, os.path.abspath(custom))
+
+    def test_windows_default_is_documents(self):
+        home = os.path.join('C:\\', 'Users', 'TestUser')
+        docs = os.path.join(home, 'Documents')
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('NEXUSDECK_DATA_DIR', None)
+            with mock.patch('platform.system', return_value='Windows'), \
+                 mock.patch('os.path.expanduser', return_value=home), \
+                 mock.patch('os.path.isdir', return_value=True):
+                result = server._user_state_dir()
+        self.assertEqual(result, os.path.join(docs, 'NexusDeck'))
 
     def test_single_location_regardless_of_cwd(self):
         """Dev and installed copies must resolve to the same dir."""
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {'APPDATA': tmp}):
+            custom = os.path.join(tmp, 'Shared')
+            with mock.patch.dict(os.environ, {'NEXUSDECK_DATA_DIR': custom}):
                 with mock.patch('platform.system', return_value='Windows'):
                     first = server._user_state_dir()
                     second = server._user_state_dir()
@@ -120,6 +132,47 @@ class MigrationTest(unittest.TestCase):
                 server._migrate_legacy_state(state)
             with open(os.path.join(state, 'server_settings.json'), encoding='utf-8') as handle:
                 self.assertEqual(json.load(handle), {'home_city': 'New'})
+
+
+class AuditBackupTest(unittest.TestCase):
+    def test_backup_rotation_and_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(server, 'STATE_DIR', tmp):
+                path = os.path.join(tmp, 'server_settings.json')
+                with open(path, 'w', encoding='utf-8') as handle:
+                    handle.write('{"v": 0}')
+                for version in range(1, 12):
+                    server._backup_state_file(path)
+                    with open(path, 'w', encoding='utf-8') as handle:
+                        handle.write(f'{{"v": {version}}}')
+                backups = sorted(os.listdir(os.path.join(tmp, 'backups')))
+                self.assertEqual(len(backups), server.BACKUP_KEEP)
+                server._audit_state_change('settings', 'keys=[a]')
+                audit = open(os.path.join(tmp, 'state_changes.log'),
+                             encoding='utf-8').read()
+                self.assertIn('settings', audit)
+
+    def test_reload_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(server, 'STATE_DIR', tmp):
+                with open(os.path.join(tmp, 'server_settings.json'),
+                          'w', encoding='utf-8') as handle:
+                    handle.write('{"home_city": "Cairo"}')
+                original = server.server_settings
+                try:
+                    ok, error = server._reload_state_file('server_settings.json')
+                    self.assertTrue(ok, error)
+                    self.assertEqual(server.server_settings.get('home_city'), 'Cairo')
+                finally:
+                    server.server_settings = original
+
+    def test_restore_rejects_traversal(self):
+        with mock.patch.object(server, 'server_settings', {'api_token': 't'}):
+            client = server.app.test_client()
+            response = client.post('/api/state/restore',
+                                   json={'file': 'server_settings.json',
+                                         'backup': '../evil.json'})
+            self.assertEqual(response.status_code, 400)
 
 
 class SingleInstanceTest(unittest.TestCase):

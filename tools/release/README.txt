@@ -24,9 +24,11 @@ WHAT'S INSIDE
   Logs go to companion.log in the same state folder below.
   Your profiles/settings live in ONE shared per-user folder and survive
   updates and restarts, no matter which copy you run (installed or dev):
-    Windows: %APPDATA%\NexusDeck\  (profile_state.json, server_settings.json)
+    Windows: Documents\NexusDeck\  (override: NEXUSDECK_DATA_DIR env var)
     Linux:   ~/.local/share/nexusdeck/
-  Old copies migrate their files there automatically on first run.
+  Files: profile_state.json, server_settings.json, profiles_store.json,
+  plus state_changes.log (who changed what) and backups/ (auto snapshots).
+  Old locations migrate there automatically on first run (newest wins).
 
 FIRST RUN ON ESP32
   Flash the firmware (see firmware-esp32-*.bin + PlatformIO instructions

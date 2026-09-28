@@ -425,6 +425,13 @@ class StudioUI {
                     <button id="btn-quit-server" class="btn btn-secondary" type="button" style="flex: none;">Quit</button>
                 </div>
                 <div class="system-row" style="display: block;">
+                    <div class="system-label">💾 State folder & history</div>
+                    <div class="system-hint" id="state-dir-line" style="word-break: break-all;">—</div>
+                    <div id="state-files-list" style="margin-top: 6px; font-size: 12px;"></div>
+                    <div id="state-changes-list" style="margin-top: 6px; font-size: 12px; max-height: 130px; overflow-y: auto;"></div>
+                    <div id="state-backups-list" style="margin-top: 6px; font-size: 12px;"></div>
+                </div>
+                <div class="system-row" style="display: block;">
                     <div class="system-label">🔒 LAN Security (pairing token)</div>
                     <div class="system-hint" id="api-token-status-line">Checking…</div>
                     <div style="display: flex; gap: 6px; margin-top: 8px;">
@@ -488,6 +495,83 @@ class StudioUI {
         }
         await this.loadGoogleState();
         await this.loadSecurityState();
+        await this.loadStateAudit();
+    }
+
+    escapeAttr(value) {
+        return this.escapeHtml(value ?? '');
+    }
+
+    async loadStateAudit() {
+        const dirLine = document.getElementById('state-dir-line');
+        const filesEl = document.getElementById('state-files-list');
+        const changesEl = document.getElementById('state-changes-list');
+        const backupsEl = document.getElementById('state-backups-list');
+        if (!dirLine || !filesEl) return;
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/state/audit`);
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'State audit failed');
+            }
+            dirLine.textContent = result.dir || '—';
+            filesEl.innerHTML = (result.files || []).map((file) =>
+                `<div>📄 ${this.escapeHtml(file.name)} · ${file.size}B · ` +
+                `${this.escapeHtml(file.mtime || 'missing')} · <code>${this.escapeHtml(file.sha || '—')}</code></div>`
+            ).join('');
+            const changes = result.changes || [];
+            changesEl.innerHTML = changes.length
+                ? changes.slice().reverse().map((entry) =>
+                    `<div>• ${this.escapeHtml(entry.at || '')} <b>${this.escapeHtml(entry.kind || '')}</b> ` +
+                    `${this.escapeHtml(entry.detail || '')} <span style="opacity:.6">(${this.escapeHtml(entry.by || '')})</span></div>`
+                ).join('')
+                : '<div style="opacity:.6">No writes recorded yet.</div>';
+            const backups = result.backups || {};
+            const rows = [];
+            for (const [file, names] of Object.entries(backups)) {
+                for (const name of (names || []).slice(0, 3)) {
+                    rows.push(
+                        `<div>🕘 ${this.escapeHtml(name)} ` +
+                        `<button class="btn btn-secondary" type="button" style="padding: 2px 8px; font-size: 11px;" ` +
+                        `data-restore-file="${this.escapeAttr(file)}" data-restore-backup="${this.escapeAttr(name)}">Restore</button></div>`
+                    );
+                }
+            }
+            backupsEl.innerHTML = rows.length ? rows.join('')
+                : '<div style="opacity:.6">No backups yet.</div>';
+            backupsEl.querySelectorAll('[data-restore-file]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    this.restoreStateBackup(
+                        button.dataset.restoreFile,
+                        button.dataset.restoreBackup
+                    );
+                });
+            });
+        } catch (error) {
+            dirLine.textContent = `State audit unavailable: ${error.message}`;
+        }
+    }
+
+    async restoreStateBackup(file, backup) {
+        if (!confirm(`Restore ${file} from ${backup}? Current version is backed up first.`)) {
+            return;
+        }
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/state/restore`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file, backup }),
+            });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Restore failed');
+            }
+            this.showToast(result.message || 'Restored');
+            await this.loadStateAudit();
+            await this.loadHomeSettings();
+        } catch (error) {
+            this.showToast(error.message, 3000);
+        }
     }
 
     async loadSecurityState() {

@@ -209,12 +209,20 @@ Base URL: `http://<pc-ip>:8765`
 | `/api/obs-status` | POST | OBS connectivity + recording state |
 
 Persistent server files (survive restarts) — one shared folder for installed
-and dev copies, so they can never diverge (old copies migrate automatically):
+and dev copies, so they can never diverge (old copies migrate automatically,
+newest file wins):
 
-- Windows: `%APPDATA%\NexusDeck\` · Linux: `~/.local/share/nexusdeck/`
+- Windows: `Documents\NexusDeck\` (visible + backed up) · Linux: `~/.local/share/nexusdeck/`
+  - Override with `NEXUSDECK_DATA_DIR` env var (old `%APPDATA%\NexusDeck\`,
+    Store-Python redirect, exe-dir and repo copies all migrate in).
   - `profile_state.json` — last active profile (written atomically)
   - `server_settings.json` — settings DB (ESP32 IP, ports, options)
+  - `profiles_store.json` — every customized profile by name
   - `companion.log` — server logs (frozen builds)
+  - `state_changes.log` — audit trail: every write with time + source
+    (endpoint/IP), so nothing changes silently — see ⚙ System → State
+  - `backups/` — snapshot before every overwrite (newest 8 per file),
+    restorable from ⚙ System or `POST /api/state/restore`
 - `presets/*.json` — built-in profiles, all fixed to the 4×3 CYD layout
 - Only one server instance runs at a time (a second launch exits with a message)
 
@@ -285,7 +293,7 @@ Every `/api/*` endpoint (except health check) requires auth:
 Regression tests guard the persistence fixes (settings must survive restarts):
 
 ```powershell
-python -m unittest discover -s tests -v   # server: state dir, atomic writes, migration, single instance
+python -m unittest discover -s tests -t . -v   # server (isolated temp state dir, never touches yours)
 node --test tests/profiles.test.js        # web: boot pulls server truth, never pushes stale cache
 ```
 

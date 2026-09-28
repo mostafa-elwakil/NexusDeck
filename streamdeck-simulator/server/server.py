@@ -33,35 +33,78 @@ PORT = 8765
 HOST = '0.0.0.0'
 
 
+STATE_FILE_NAMES = ('profile_state.json', 'server_settings.json',
+                      'profiles_store.json')
+
+
 def _user_state_dir():
-    """Single shared state dir so dev runs and installed copies never diverge."""
+    """Single shared state dir so dev runs and installed copies never diverge.
+
+    Override with NEXUSDECK_DATA_DIR. Default on Windows is a visible folder
+    (Documents\\NexusDeck) so settings are findable and backed up; Linux
+    keeps the XDG data dir.
+    """
+    override = (os.environ.get('NEXUSDECK_DATA_DIR') or '').strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
     if platform.system() == 'Windows':
+        docs = os.path.join(os.path.expanduser('~'), 'Documents')
+        if os.path.isdir(docs):
+            return os.path.join(docs, 'NexusDeck')
         base = os.environ.get('APPDATA') or os.path.expanduser('~')
         return os.path.join(base, 'NexusDeck')
     return os.path.join(os.path.expanduser('~'), '.local', 'share', 'nexusdeck')
 
 
-def _migrate_legacy_state(state_dir):
-    """One-time copy of state files from old per-copy locations."""
-    legacy_dirs = []
+def _legacy_state_dirs():
+    """Everywhere older builds may have left state files."""
+    candidates = []
     if getattr(sys, 'frozen', False):
-        legacy_dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
-    legacy_dirs.append(os.path.dirname(os.path.abspath(__file__)))
-    for name in ('profile_state.json', 'server_settings.json'):
+        candidates.append(os.path.dirname(os.path.abspath(sys.executable)))
+    candidates.append(os.path.dirname(os.path.abspath(__file__)))
+    if platform.system() == 'Windows':
+        appdata = os.environ.get('APPDATA') or ''
+        if appdata:
+            candidates.append(os.path.join(appdata, 'NexusDeck'))
+        # Windows Store Python redirects %APPDATA% per-app; a Store-based
+        # run may have written state under its package cache instead.
+        local = os.environ.get('LOCALAPPDATA') or ''
+        if local:
+            packages = os.path.join(local, 'Packages')
+            try:
+                for entry in os.listdir(packages):
+                    if 'PythonSoftwareFoundation' in entry:
+                        redirected = os.path.join(
+                            packages, entry, 'LocalCache', 'Roaming', 'NexusDeck')
+                        candidates.append(redirected)
+            except OSError:
+                pass
+    return candidates
+
+
+def _migrate_legacy_state(state_dir):
+    """One-time copy of state files from old locations (newest wins)."""
+    for name in STATE_FILE_NAMES:
         dest = os.path.join(state_dir, name)
         if os.path.exists(dest):
             continue
-        for legacy in legacy_dirs:
+        best, best_mtime = None, -1.0
+        for legacy in _legacy_state_dirs():
             if os.path.abspath(legacy) == os.path.abspath(state_dir):
                 continue
             src = os.path.join(legacy, name)
-            if os.path.exists(src):
-                try:
-                    shutil.copy2(src, dest)
-                    print(f'[STATE] migrated {name} from {legacy}')
-                except Exception as error:
-                    print(f'[STATE] migration failed for {name}: {error}')
-                break
+            try:
+                mtime = os.path.getmtime(src)
+            except OSError:
+                continue
+            if mtime > best_mtime:
+                best, best_mtime = src, mtime
+        if best:
+            try:
+                shutil.copy2(best, dest)
+                print(f'[STATE] migrated {name} from {os.path.dirname(best)}')
+            except Exception as error:
+                print(f'[STATE] migration failed for {name}: {error}')
 
 
 def _runtime_paths():
@@ -336,6 +379,106 @@ def auth_status():
     """Public: does this client need a token? (for Studio token prompt)."""
     return jsonify({'success': True, 'loopback': _is_loopback(),
                     'token_configured': bool(_api_token())})
+
+
+def _state_files_info():
+    files = []
+    for name in STATE_FILE_NAMES:
+        path = os.path.join(STATE_DIR, name)
+        try:
+            stat = os.stat(path)
+            files.append({'name': name, 'size': stat.st_size,
+                          'mtime': datetime.fromtimestamp(stat.st_mtime).isoformat(timespec='seconds'),
+                          'sha': _sha8(path)})
+        except OSError:
+            files.append({'name': name, 'size': 0, 'mtime': None, 'sha': ''})
+    return files
+
+
+def _state_backups():
+    backup_dir = os.path.join(STATE_DIR, BACKUP_DIR_NAME)
+    found = {}
+    try:
+        entries = sorted(os.listdir(backup_dir), reverse=True)
+    except OSError:
+        entries = []
+    for name in STATE_FILE_NAMES:
+        found[name] = [entry for entry in entries if entry.startswith(name + '.')]
+    return found
+
+
+@app.route('/api/state/audit', methods=['GET'])
+@_require_api_token
+def state_audit():
+    """State folder overview: location, files+hashes, backups, recent writes."""
+    changes = []
+    try:
+        with open(os.path.join(STATE_DIR, AUDIT_LOG_NAME), 'r', encoding='utf-8') as handle:
+            lines = handle.read().splitlines()
+        for line in lines[-50:]:
+            try:
+                changes.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return jsonify({'success': True, 'dir': STATE_DIR,
+                    'files': _state_files_info(),
+                    'backups': _state_backups(), 'changes': changes})
+
+
+def _reload_state_file(name):
+    """Re-read one state file from disk into memory. Returns (ok, error)."""
+    global server_settings, current_profile, known_profiles
+    path = os.path.join(STATE_DIR, name)
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as error:
+        return False, f'cannot read {name}: {error}'
+    if name == 'server_settings.json':
+        if not isinstance(data, dict):
+            return False, 'settings is not an object'
+        server_settings = data
+    elif name == 'profile_state.json':
+        if not isinstance(data, dict):
+            return False, 'profile is not an object'
+        current_profile = data
+    elif name == 'profiles_store.json':
+        if not isinstance(data, dict):
+            return False, 'store is not an object'
+        known_profiles = {key: value for key, value in data.items()
+                          if _valid_stored_profile(value)}
+    else:
+        return False, 'unknown state file'
+    return True, ''
+
+
+@app.route('/api/state/restore', methods=['POST'])
+@_require_api_token
+def state_restore():
+    """Restore one state file from a backup, then reload it into memory."""
+    data = request.json or {}
+    name = data.get('file', '')
+    backup = data.get('backup', '')
+    if name not in STATE_FILE_NAMES or not backup or '/' in backup or '\\' in backup:
+        return jsonify({'success': False, 'error': 'Invalid file or backup'}), 400
+    if not backup.startswith(name + '.'):
+        return jsonify({'success': False, 'error': 'Backup does not match file'}), 400
+    src = os.path.join(STATE_DIR, BACKUP_DIR_NAME, backup)
+    dest = os.path.join(STATE_DIR, name)
+    if not os.path.isfile(src):
+        return jsonify({'success': False, 'error': 'Backup not found'}), 404
+    _backup_state_file(dest)
+    try:
+        shutil.copy2(src, dest)
+    except OSError as error:
+        return jsonify({'success': False, 'error': f'restore failed: {error}'}), 500
+    ok, error = _reload_state_file(name)
+    _audit_state_change('restore', f'{name} <- {backup} (reloaded={ok})')
+    if not ok:
+        return jsonify({'success': False, 'error': error}), 500
+    return jsonify({'success': True, 'message': f'{name} restored from {backup}'})
 
 
 @app.route('/api/auth/regenerate', methods=['POST'])
@@ -1512,6 +1655,70 @@ def _load_server_settings():
     }
 
 
+AUDIT_LOG_NAME = 'state_changes.log'
+BACKUP_DIR_NAME = 'backups'
+BACKUP_KEEP = 8
+
+
+def _state_caller():
+    """Who triggered this write (endpoint + IP), for the audit trail."""
+    try:
+        return f'{request.remote_addr} {request.method} {request.path}'
+    except RuntimeError:
+        return 'internal (boot/import)'
+
+
+def _audit_state_change(kind, detail=''):
+    """Append one JSON line per state write so nothing changes silently."""
+    try:
+        entry = json.dumps({'at': datetime.now().isoformat(timespec='seconds'),
+                            'kind': kind, 'detail': detail,
+                            'by': _state_caller()}, ensure_ascii=False)
+        with open(os.path.join(STATE_DIR, AUDIT_LOG_NAME), 'a', encoding='utf-8') as handle:
+            handle.write(entry + '\n')
+    except Exception:
+        pass
+
+
+def _backup_state_file(path):
+    """Snapshot the previous version before overwriting (keep newest N)."""
+    try:
+        if not os.path.exists(path):
+            return None
+        backup_dir = os.path.join(STATE_DIR, BACKUP_DIR_NAME)
+        os.makedirs(backup_dir, exist_ok=True)
+        base = os.path.basename(path)
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        dest = os.path.join(backup_dir, f'{base}.{stamp}.bak')
+        counter = 1
+        while os.path.exists(dest):
+            counter += 1
+            dest = os.path.join(backup_dir, f'{base}.{stamp}-{counter}.bak')
+        shutil.copy2(path, dest)
+        siblings = sorted(f for f in os.listdir(backup_dir)
+                          if f.startswith(base + '.'))
+        for stale in siblings[:-BACKUP_KEEP]:
+            try:
+                os.remove(os.path.join(backup_dir, stale))
+            except OSError:
+                pass
+        return os.path.basename(dest)
+    except Exception:
+        return None
+
+
+def _sha8(path):
+    try:
+        import hashlib
+        digest = hashlib.sha256()
+        with open(path, 'rb') as handle:
+            for chunk in iter(lambda: handle.read(65536), b''):
+                digest.update(chunk)
+        return digest.hexdigest()[:8]
+    except OSError:
+        return ''
+
+
 def _atomic_write_json(path, data, indent=None):
     """Write JSON atomically: a crash/restart mid-write can never leave a
     truncated file behind (which would boot back into defaults)."""
@@ -1529,7 +1736,9 @@ def _atomic_write_json(path, data, indent=None):
 
 def _persist_server_settings(settings):
     try:
+        _backup_state_file(SETTINGS_DB_FILE)
         _atomic_write_json(SETTINGS_DB_FILE, settings, indent=2)
+        _audit_state_change('settings', f"keys={sorted(settings.keys())}")
     except Exception as error:
         log_request('ERROR', f'persist settings: {str(error)}')
 
@@ -1574,7 +1783,11 @@ def _load_persisted_profile():
 def _persist_profile(profile):
     """Save the current profile to disk (best-effort, atomic)."""
     try:
+        _backup_state_file(PROFILE_STATE_FILE)
         _atomic_write_json(PROFILE_STATE_FILE, profile)
+        if isinstance(profile, dict):
+            _audit_state_change('profile', f"name={profile.get('name', '')} "
+                                           f"buttons={len(profile.get('buttons', []))}")
     except Exception as error:
         log_request('ERROR', f'persist profile: {str(error)}')
 
@@ -2631,7 +2844,9 @@ def _load_profiles_store():
 
 def _persist_profiles_store():
     try:
+        _backup_state_file(PROFILES_STORE_FILE)
         _atomic_write_json(PROFILES_STORE_FILE, known_profiles)
+        _audit_state_change('store', f"profiles={sorted(known_profiles.keys())}")
     except Exception as error:
         log_request('ERROR', f'persist profiles store: {str(error)}')
 
@@ -2997,6 +3212,19 @@ if __name__ == '__main__':
 
     _ensure_single_instance()
     _ensure_api_token()
+    print(f'[STATE] dir={STATE_DIR}')
+    for info in _state_files_info():
+        print(f"[STATE] {info['name']} size={info['size']} "
+              f"mtime={info['mtime']} sha={info['sha']}")
+    try:
+        audit_path = os.path.join(STATE_DIR, AUDIT_LOG_NAME)
+        with open(audit_path, 'r', encoding='utf-8') as handle:
+            audit_lines = handle.read().splitlines()
+        if len(audit_lines) > 500:
+            with open(audit_path, 'w', encoding='utf-8') as handle:
+                handle.write('\n'.join(audit_lines[-400:]) + '\n')
+    except OSError:
+        pass
 
     try:
         app.run(
