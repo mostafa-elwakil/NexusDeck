@@ -131,6 +131,7 @@ struct Button {
     int pomoShortSec;
     int pomoLongSec;
     uint8_t pomoCycle;      // sessions before long break
+    String pomoTask;        // task name shown on the pomo page
     bool pomoAlert;
     unsigned long pomoAlertUntil;
     unsigned long pomoLastTap;
@@ -303,6 +304,7 @@ void setup() {
         buttons[i].actionData = "";
         buttons[i].hasWidget = false;
         buttons[i].widgetType = "";
+        buttons[i].pomoTask = "";
         buttons[i].state = 0;
         buttons[i].timerRunning = false;
         buttons[i].timerRemaining = 0;
@@ -1137,6 +1139,7 @@ void syncProfile() {
                         buttons[i].timerRemaining = 0;
                         buttons[i].pomoPhase = 0;
                         buttons[i].pomoDone = 0;
+                        buttons[i].pomoTask = "";
                         buttons[i].pomoAlert = false;
                         continue;
                     }
@@ -1148,6 +1151,7 @@ void syncProfile() {
                     buttons[i].color = parseColor(btnObj["color"] | "#1a1a2e");
                     buttons[i].hasWidget = false;
                     buttons[i].widgetType = "";
+                    buttons[i].pomoTask = "";
 
                     if (btnObj.containsKey("action") && btnObj["action"].is<JsonObject>()) {
                         JsonObject actionObj = btnObj["action"].as<JsonObject>();
@@ -1190,11 +1194,14 @@ void syncProfile() {
                             }
                         } else if (buttons[i].widgetType == "pomodoro") {
                             int workMin = 25, shortMin = 5, longMin = 15, cyc = 4;
+                            buttons[i].pomoTask = "";
                             if (!btnObj["widget"]["config"].isNull()) {
                                 workMin = btnObj["widget"]["config"]["workMinutes"] | 25;
                                 shortMin = btnObj["widget"]["config"]["shortBreakMinutes"] | 5;
                                 longMin = btnObj["widget"]["config"]["longBreakMinutes"] | 15;
                                 cyc = btnObj["widget"]["config"]["sessionsBeforeLong"] | 4;
+                                buttons[i].pomoTask = btnObj["widget"]["config"]["task"] | "";
+                                buttons[i].pomoTask.trim();
                             }
                             buttons[i].pomoWorkSec = workMin * 60;
                             buttons[i].pomoShortSec = shortMin * 60;
@@ -1704,9 +1711,13 @@ void drawPomoPage() {
     tft.fillScreen(deckBackgroundColor);
     tft.setTextDatum(TC_DATUM);
 
-    // Title
+    // Title (task name when set)
     tft.setTextColor(TFT_WHITE, deckBackgroundColor);
-    tft.drawString("POMODORO", SCREEN_WIDTH / 2, 2, 2);
+    if (btn.pomoTask.length() > 0) {
+        tft.drawString(truncateText(btn.pomoTask, 18), SCREEN_WIDTH / 2, 2, 2);
+    } else {
+        tft.drawString("POMODORO", SCREEN_WIDTH / 2, 2, 2);
+    }
 
     // Phase name
     uint16_t phaseColor = pomoPhaseColor(btn);

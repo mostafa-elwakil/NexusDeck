@@ -322,6 +322,7 @@ class LiveKeysManager {
     // Pomodoro Widget (Focus / Short Break / Long Break cycles)
     // Controls: single press = start/pause, double press = reset session
     createPomodoroWidget(buttonIndex, config) {
+        const task = (config.task || '').trim().slice(0, 24);
         const workSec = Math.max(60, Math.round((config.workMinutes || 25) * 60));
         const shortSec = Math.max(60, Math.round((config.shortBreakMinutes || 5) * 60));
         const longSec = Math.max(60, Math.round((config.longBreakMinutes || 15) * 60));
@@ -350,6 +351,7 @@ class LiveKeysManager {
         const widget = {
             type: 'pomodoro',
             config: {
+                task,
                 workMinutes: workSec / 60,
                 shortBreakMinutes: shortSec / 60,
                 longBreakMinutes: longSec / 60,
@@ -381,7 +383,8 @@ class LiveKeysManager {
                 }
 
                 this.deck.updateButton(buttonIndex, {
-                    label: `${phaseName(phase)} ${fmt(remaining)}\n${sessionDots()}`,
+                    label: task ? `${task}\n${phaseName(phase)} ${fmt(remaining)}\n${sessionDots()}`
+                        : `${phaseName(phase)} ${fmt(remaining)}\n${sessionDots()}`,
                     icon: running ? '⏸️' : (alerting ? '🔔' : '🍅'),
                     color: color
                 });

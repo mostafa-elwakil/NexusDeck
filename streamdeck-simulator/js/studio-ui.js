@@ -1646,6 +1646,10 @@ class StudioUI {
                 </div>
                 <div id="pomodoro-config" style="display: none; margin-top: 8px;">
                     <div class="form-group">
+                        <label>Task name</label>
+                        <input type="text" id="action-pomo-task" class="form-control" maxlength="24" placeholder="Deep Work">
+                    </div>
+                    <div class="form-group">
                         <label>Focus (minutes)</label>
                         <input type="number" id="action-pomo-work" class="form-control" min="1" max="180" value="25">
                     </div>
@@ -1848,6 +1852,28 @@ class StudioUI {
         };
         typeSelect.addEventListener('change', syncPomoVisibility);
         syncPomoVisibility();
+        // Prefill from the selected button's saved widget (if any).
+        const saved = this.selectedButton?.config?.widget || {};
+        if (saved.type) {
+            typeSelect.value = saved.type;
+            syncPomoVisibility();
+        }
+        const config = saved.config || {};
+        const setVal = (id, value) => {
+            const el = document.getElementById(id);
+            if (el && value !== undefined && value !== null && value !== '') {
+                el.value = value;
+            }
+        };
+        setVal('action-pomo-task', config.task);
+        setVal('action-pomo-work', config.workMinutes);
+        setVal('action-pomo-short', config.shortBreakMinutes);
+        setVal('action-pomo-long', config.longBreakMinutes);
+        setVal('action-pomo-sessions', config.sessionsBeforeLong);
+        const autoStart = document.getElementById('action-pomo-autostart');
+        if (autoStart && config.autoStart === true) {
+            autoStart.checked = true;
+        }
     }
 
     buildWidgetConfig(widgetType) {
@@ -1857,6 +1883,7 @@ class StudioUI {
             return Number.isFinite(v) && v > 0 ? v : fallback;
         };
         return {
+            task: (document.getElementById('action-pomo-task')?.value || '').trim().slice(0, 24),
             workMinutes: num('action-pomo-work', 25),
             shortBreakMinutes: num('action-pomo-short', 5),
             longBreakMinutes: num('action-pomo-long', 15),
