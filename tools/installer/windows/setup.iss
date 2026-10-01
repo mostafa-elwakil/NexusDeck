@@ -13,7 +13,8 @@ AppName=NexusDeck
 AppVersion={#MyAppVersion}
 AppVerName=NexusDeck {#MyAppVersion}
 AppId={{7B4E2A1D-9C3F-4A5F-8D2E-1F3A5B6C7D8E}
-AppPublisher=NexusDeck
+AppPublisher=Mostafa Elwakil
+AppCopyright=Copyright (C) 2026 Mostafa Elwakil
 DefaultDirName={localappdata}\Programs\NexusDeck
 DefaultGroupName=NexusDeck
 PrivilegesRequired=lowest
@@ -26,7 +27,7 @@ CloseApplications=yes
 CloseApplicationsFilter=NexusDeckCompanion.exe
 UninstallDisplayName=NexusDeck
 SetupIconFile=..\..\..\streamdeck-simulator\server\assets\nexusdeck.ico
-UninstallDisplayIcon={app}\NexusDeckCompanion.exe
+UninstallDisplayIcon={app}\nexusdeck.ico
 ; Keep user profiles/settings on uninstall:
 ; profile_state.json and server_settings.json are left in {app}.
 
