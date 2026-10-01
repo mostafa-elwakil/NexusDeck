@@ -425,13 +425,6 @@ class StudioUI {
                     <button id="btn-quit-server" class="btn btn-secondary" type="button" style="flex: none;">Quit</button>
                 </div>
                 <div class="system-row" style="display: block;">
-                    <div class="system-label">💾 State folder & history</div>
-                    <div class="system-hint" id="state-dir-line" style="word-break: break-all;">—</div>
-                    <div id="state-files-list" style="margin-top: 6px; font-size: 12px;"></div>
-                    <div id="state-changes-list" style="margin-top: 6px; font-size: 12px; max-height: 130px; overflow-y: auto;"></div>
-                    <div id="state-backups-list" style="margin-top: 6px; font-size: 12px;"></div>
-                </div>
-                <div class="system-row" style="display: block;">
                     <div class="system-label">🔒 LAN Security (pairing token)</div>
                     <div class="system-hint" id="api-token-status-line">Checking…</div>
                     <div style="display: flex; gap: 6px; margin-top: 8px;">
@@ -461,6 +454,18 @@ class StudioUI {
                         <button id="btn-google-save" class="btn btn-secondary" type="button" style="flex: 1;">💾 Save</button>
                         <button id="btn-google-connect" class="btn btn-secondary" type="button" style="flex: 1;">🔗 Connect</button>
                         <button id="btn-google-disconnect" class="btn btn-secondary" type="button" style="flex: 1;">⏏ Forget</button>
+                    </div>
+                </div>
+                <div class="system-row state-collapsible" style="display: block;" id="state-history-section">
+                    <button id="btn-toggle-state-history" class="state-toggle" type="button" aria-expanded="false">
+                        <span class="system-label">💾 State folder & history</span>
+                        <span class="state-chevron" aria-hidden="true">▸</span>
+                    </button>
+                    <div class="state-body" id="state-history-body" hidden>
+                        <div class="system-hint" id="state-dir-line" style="word-break: break-all;">—</div>
+                        <div id="state-files-list" style="margin-top: 6px; font-size: 12px;"></div>
+                        <div id="state-changes-list" style="margin-top: 6px; font-size: 12px; max-height: 130px; overflow-y: auto;"></div>
+                        <div id="state-backups-list" style="margin-top: 6px; font-size: 12px;"></div>
                     </div>
                 </div>
                 <div class="system-status" id="system-status-line"></div>
@@ -500,6 +505,17 @@ class StudioUI {
 
     escapeAttr(value) {
         return this.escapeHtml(value ?? '');
+    }
+
+    applyStateHistoryCollapsed() {
+        // History is last and collapsible; collapsed by default.
+        const collapsed = localStorage.getItem('nexusdeck_state_collapsed') !== '0';
+        const body = document.getElementById('state-history-body');
+        const toggle = document.getElementById('btn-toggle-state-history');
+        const chevron = toggle?.querySelector('.state-chevron');
+        if (body) body.hidden = collapsed;
+        if (toggle) toggle.setAttribute('aria-expanded', String(!collapsed));
+        if (chevron) chevron.textContent = collapsed ? '▸' : '▾';
     }
 
     async loadStateAudit() {
@@ -937,6 +953,13 @@ class StudioUI {
             const open = document.body.classList.toggle('system-open');
             document.getElementById('btn-system')?.classList.toggle('active', open);
             if (open) this.loadSystemState();
+        });
+
+        this.applyStateHistoryCollapsed();
+        document.getElementById('btn-toggle-state-history')?.addEventListener('click', () => {
+            const collapsed = localStorage.getItem('nexusdeck_state_collapsed') !== '0';
+            localStorage.setItem('nexusdeck_state_collapsed', collapsed ? '0' : '1');
+            this.applyStateHistoryCollapsed();
         });
 
         document.getElementById('btn-close-system')?.addEventListener('click', () => {

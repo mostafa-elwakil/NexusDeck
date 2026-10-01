@@ -277,6 +277,20 @@ def simulator_javascript(asset_path):
 def simulator_presets(asset_path):
     return send_from_directory(os.path.join(SIMULATOR_DIR, 'presets'), asset_path)
 
+
+@app.after_request
+def _no_cache_static(response):
+    """Never cache the web UI shell (index/css/js/presets): on a LAN app
+    freshness beats bandwidth, and stale JS/CSS hides real fixes."""
+    try:
+        path = request.path
+    except RuntimeError:
+        return response
+    if path == '/' or path.startswith(('/css/', '/js/', '/presets/')):
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+    return response
+
 # ===== Security Configuration =====
 # Rate limiting
 rate_limit_store = defaultdict(list)
@@ -3152,7 +3166,16 @@ def _ensure_single_instance():
     try:
         sock.bind(('127.0.0.1', PORT))
     except OSError:
-        print(f"Another NexusDeck server is already running on port {PORT} - exiting.")
+        message = (f"Another NexusDeck server is already running on port {PORT} - exiting.")
+        print(message)
+        try:
+            if platform.system() == 'Windows':
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    0, message + "\n\nOpen http://localhost:8765/ in your browser instead.",
+                    "NexusDeck", 0x40)
+        except Exception:
+            pass
         sys.exit(1)
     _INSTANCE_LOCK = sock
 
@@ -3212,6 +3235,9 @@ if __name__ == '__main__':
 
     _ensure_single_instance()
     _ensure_api_token()
+    if getattr(sys, 'frozen', False) and '--minimized' not in sys.argv:
+        import webbrowser
+        threading.Timer(2.0, lambda: webbrowser.open(f'http://localhost:{PORT}/')).start()
     print(f'[STATE] dir={STATE_DIR}')
     for info in _state_files_info():
         print(f"[STATE] {info['name']} size={info['size']} "

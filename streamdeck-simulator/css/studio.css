@@ -697,6 +697,29 @@ textarea.form-control {
     padding-right: 2px;
 }
 
+.state-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+}
+
+.state-toggle .state-chevron {
+    opacity: 0.6;
+    font-size: 14px;
+}
+
+.state-body {
+    margin-top: 6px;
+}
+
 .icon-preset-btn {
     width: 100%;
     aspect-ratio: 1;
@@ -867,6 +890,8 @@ body.history-open .action-history-panel {
     top: 76px;
     right: 16px;
     width: 300px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
     background: rgba(16, 19, 26, 0.88);
     backdrop-filter: blur(22px);
     border: 1px solid var(--line);

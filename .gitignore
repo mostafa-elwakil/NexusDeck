@@ -49,6 +49,7 @@ esp32-firmware/include/config.h
 *.tmp
 *.temp
 .cache/
+installer-out/
 ing/
 tests/
 .agents/
