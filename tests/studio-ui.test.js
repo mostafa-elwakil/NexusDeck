@@ -102,6 +102,32 @@ describe('profileNames', () => {
     });
 });
 
+describe('timer duration helpers', () => {
+    const parse = (text, fallback) =>
+        StudioUI.prototype.parseDurationMmSs.call({}, text, fallback);
+    const format = (total) =>
+        StudioUI.prototype.formatDurationMmSs.call({}, total);
+
+    it('parses mm:ss', () => {
+        assert.equal(parse('05:00', 300), 300);
+        assert.equal(parse('1:30', 300), 90);
+        assert.equal(parse('00:45', 300), 45);
+    });
+
+    it('falls back on garbage', () => {
+        assert.equal(parse('', 300), 300);
+        assert.equal(parse('abc', 300), 300);
+        assert.equal(parse('00:00', 300), 300);
+        assert.equal(parse('5:99', 300), 300);
+    });
+
+    it('formats mm:ss', () => {
+        assert.equal(format(300), '05:00');
+        assert.equal(format(90), '01:30');
+        assert.equal(format(0), '00:00');
+    });
+});
+
 describe('keyComboFromEvent', () => {
     const combo = (event) => StudioUI.prototype.keyComboFromEvent.call({}, event);
 

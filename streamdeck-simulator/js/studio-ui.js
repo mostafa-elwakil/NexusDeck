@@ -1825,6 +1825,13 @@ class StudioUI {
                     </div>
                     <small style="display: block; margin-top: 6px; opacity: 0.7;">Press = start/pause · double-press = reset session</small>
                 </div>
+                <div id="timer-config" style="display: none; margin-top: 8px;">
+                    <div class="form-group">
+                        <label>Duration (mm:ss)</label>
+                        <input type="text" id="action-timer-duration" class="form-control" maxlength="5" placeholder="05:00">
+                    </div>
+                    <small style="display: block; margin-top: 6px; opacity: 0.7;">Press = start/pause · press at 00:00 = reset</small>
+                </div>
             `,
             'switch_profile': `
                 <div class="form-group">
@@ -2029,12 +2036,28 @@ class StudioUI {
         });
     }
 
+    parseDurationMmSs(text, fallback) {
+        const match = String(text || '').trim().match(/^(\d{1,3}):([0-5]?\d)$/);
+        if (!match) return fallback;
+        const total = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+        return total > 0 ? total : fallback;
+    }
+
+    formatDurationMmSs(totalSeconds) {
+        const total = Math.max(0, Math.round(totalSeconds || 0));
+        return `${Math.floor(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}`;
+    }
+
     setupWidgetConfig() {
         const typeSelect = document.getElementById('action-widget-type');
         const pomoConfig = document.getElementById('pomodoro-config');
         if (!typeSelect || !pomoConfig) return;
+        const timerConfig = document.getElementById('timer-config');
         const syncPomoVisibility = () => {
             pomoConfig.style.display = typeSelect.value === 'pomodoro' ? 'block' : 'none';
+            if (timerConfig) {
+                timerConfig.style.display = typeSelect.value === 'timer' ? 'block' : 'none';
+            }
         };
         typeSelect.addEventListener('change', syncPomoVisibility);
         syncPomoVisibility();
@@ -2060,22 +2083,44 @@ class StudioUI {
         if (autoStart && config.autoStart === true) {
             autoStart.checked = true;
         }
+        const timerDuration = document.getElementById('action-timer-duration');
+        if (timerDuration && Number.isFinite(config.duration) && config.duration > 0) {
+            timerDuration.value = this.formatDurationMmSs(config.duration);
+        } else if (timerDuration && !timerDuration.value) {
+            timerDuration.value = '05:00';
+        }
     }
 
     buildWidgetConfig(widgetType) {
-        if (widgetType !== 'pomodoro') return {};
-        const num = (id, fallback) => {
-            const v = parseFloat(document.getElementById(id)?.value);
-            return Number.isFinite(v) && v > 0 ? v : fallback;
-        };
-        return {
-            task: (document.getElementById('action-pomo-task')?.value || '').trim().slice(0, 24),
-            workMinutes: num('action-pomo-work', 25),
-            shortBreakMinutes: num('action-pomo-short', 5),
-            longBreakMinutes: num('action-pomo-long', 15),
-            sessionsBeforeLong: Math.max(1, Math.round(num('action-pomo-sessions', 4))),
-            autoStart: document.getElementById('action-pomo-autostart')?.checked === true
-        };
+        // Merge over the saved config so fields the form doesn't show
+        // (e.g. timer duration) are never wiped back to defaults.
+        const saved = this.selectedButton?.config?.widget?.config;
+        const base = (saved && typeof saved === 'object') ? { ...saved } : {};
+        if (widgetType === 'pomodoro') {
+            const num = (id, fallback) => {
+                const v = parseFloat(document.getElementById(id)?.value);
+                return Number.isFinite(v) && v > 0 ? v : fallback;
+            };
+            return {
+                ...base,
+                task: (document.getElementById('action-pomo-task')?.value || '').trim().slice(0, 24),
+                workMinutes: num('action-pomo-work', 25),
+                shortBreakMinutes: num('action-pomo-short', 5),
+                longBreakMinutes: num('action-pomo-long', 15),
+                sessionsBeforeLong: Math.max(1, Math.round(num('action-pomo-sessions', 4))),
+                autoStart: document.getElementById('action-pomo-autostart')?.checked === true
+            };
+        }
+        if (widgetType === 'timer') {
+            const input = document.getElementById('action-timer-duration');
+            const fallback = (Number.isFinite(base.duration) && base.duration > 0)
+                ? base.duration : 300;
+            return {
+                ...base,
+                duration: this.parseDurationMmSs(input?.value, fallback),
+            };
+        }
+        return base;
     }
 
     setupMacroConfig(existingAction = null) {
