@@ -337,6 +337,17 @@ class StudioUI {
                 <div class="panel-actions">
                     <button id="btn-new-profile" class="btn btn-block">+ New Profile</button>
                 </div>
+                <div class="preset-section" id="profile-bg-section">
+                    <p class="panel-kicker">ESP32 background</p>
+                    <div class="form-group">
+                        <label>Profile background color</label>
+                        <div class="color-picker-group">
+                            <input type="color" id="profile-bg-color" class="color-input" value="#1a1a2e">
+                            <input type="text" id="profile-bg-color-text" class="form-control color-text" value="#1a1a2e">
+                        </div>
+                    </div>
+                    <p class="text-muted" style="font-size: 12px; color: #888;">Applies to the whole screen on the next sync.</p>
+                </div>
                 <div class="preset-section" id="home-page-section">
                     <p class="panel-kicker">ESP32 home page</p>
                     <div class="form-group">
@@ -980,6 +991,19 @@ class StudioUI {
                 colorInput.value = color;
                 colorText.value = color;
             });
+        });
+
+        // Profile background color (applies + syncs to ESP32)
+        const profileBg = document.getElementById('profile-bg-color');
+        const profileBgText = document.getElementById('profile-bg-color-text');
+        profileBg?.addEventListener('input', (e) => {
+            this.applyProfileBg(e.target.value, profileBg);
+        });
+        profileBg?.addEventListener('change', () => {
+            this.showToast('Background sent — syncs to ESP32');
+        });
+        profileBgText?.addEventListener('input', (e) => {
+            this.applyProfileBg(e.target.value, profileBgText);
         });
 
         // Button click for editing
@@ -2495,10 +2519,31 @@ class StudioUI {
         await this.actions.executeAction(this.selectedButton);
     }
 
+    syncProfileBgPicker() {
+        const bg = this.profiles?.currentProfile?.backgroundColor || '#1a1a2e';
+        const picker = document.getElementById('profile-bg-color');
+        const text = document.getElementById('profile-bg-color-text');
+        if (picker) picker.value = /^#[0-9a-fA-F]{6}$/.test(bg) ? bg : '#1a1a2e';
+        if (text) text.value = picker ? picker.value : bg;
+    }
+
+    applyProfileBg(color, source) {
+        if (!/^#[0-9a-fA-F]{6}$/.test(color || '')) return;
+        const picker = document.getElementById('profile-bg-color');
+        const text = document.getElementById('profile-bg-color-text');
+        if (picker && source !== picker) picker.value = color;
+        if (text && source !== text) text.value = color;
+        if (this.profiles?.currentProfile) {
+            this.profiles.currentProfile.backgroundColor = color;
+            this.profiles.saveCurrentProfile();
+        }
+    }
+
     refreshProfilesList() {
         const listContainer = document.getElementById('profiles-list');
         if (!listContainer) return;
 
+        this.syncProfileBgPicker();
         listContainer.innerHTML = '';
 
         const profiles = this.profiles.getAllProfiles();

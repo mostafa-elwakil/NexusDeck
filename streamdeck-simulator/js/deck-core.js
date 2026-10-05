@@ -310,6 +310,7 @@ class StreamDeckCore {
     exportProfile() {
         const profile = {
             name: this.currentProfile?.name || 'Custom Profile',
+            backgroundColor: this.currentProfile?.backgroundColor || '#1a1a2e',
             size: this.config.size,
             rows: this.config.rows,
             cols: this.config.cols,

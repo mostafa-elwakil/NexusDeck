@@ -628,6 +628,9 @@ void setupDisplay() {
     applyBacklight(true);
     tft.init();
     tft.setRotation(1); // Landscape: 320x240
+    // This CYD batch renders every channel inverted (red->cyan,
+    // black->white): flip the controller output back to normal.
+    tft.invertDisplay(true);
     Serial.print("TFT dimensions: ");
     Serial.print(tft.width());
     Serial.print("x");
@@ -722,7 +725,7 @@ void openSetupPortal() {
     wm.addParameter(&custom_api_token);
     WiFiManagerParameter custom_bg_color("bg_color", "Background color (pick from the list)", bgColorHex.c_str(), 8, "type=\"color\"");
     wm.addParameter(&custom_bg_color);
-    WiFiManagerParameter custom_bg_follow("bg_follow", "Follow profile background instead", "1", 2, "type=\"checkbox\"");
+    WiFiManagerParameter custom_bg_follow("bg_follow", "Use custom background color (uncheck to follow profile)", "", 2, "type=\"checkbox\"");
     wm.addParameter(&custom_bg_follow);
 
     if (!wm.startConfigPortal("NexusDeck-Setup", "password123")) {
@@ -752,7 +755,9 @@ void openSetupPortal() {
     String followBg = custom_bg_follow.getValue();
     String newBg = custom_bg_color.getValue();
     newBg.trim();
-    if (followBg.length() > 0 || newBg.length() == 0) {
+    // Unchecked checkbox submits nothing, so getValue() keeps its
+        // default: empty means FOLLOW profile, "1" means custom color.
+        if (followBg.length() == 0 || newBg.length() == 0) {
         preferences.begin("deck", false);
         preferences.putBool("bg_custom", false);
         preferences.end();
@@ -798,7 +803,7 @@ void setupWiFi() {
     wm.addParameter(&custom_api_token);
     WiFiManagerParameter custom_bg_color("bg_color", "Background color (pick from the list)", bgColorHex.c_str(), 8, "type=\"color\"");
     wm.addParameter(&custom_bg_color);
-    WiFiManagerParameter custom_bg_follow("bg_follow", "Follow profile background instead", "1", 2, "type=\"checkbox\"");
+    WiFiManagerParameter custom_bg_follow("bg_follow", "Use custom background color (uncheck to follow profile)", "", 2, "type=\"checkbox\"");
     wm.addParameter(&custom_bg_follow);
 
     bool needPortal = (serverIP.length() == 0 || !serverIP.startsWith("http"));
@@ -847,7 +852,9 @@ void setupWiFi() {
     String followBg = custom_bg_follow.getValue();
     String newBg = custom_bg_color.getValue();
     newBg.trim();
-    if (followBg.length() > 0 || newBg.length() == 0) {
+    // Unchecked checkbox submits nothing, so getValue() keeps its
+        // default: empty means FOLLOW profile, "1" means custom color.
+        if (followBg.length() == 0 || newBg.length() == 0) {
         preferences.begin("deck", false);
         preferences.putBool("bg_custom", false);
         preferences.end();
