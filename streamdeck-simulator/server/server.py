@@ -905,6 +905,10 @@ def _public_settings():
     public.pop('google_client_secret', None)
     public.pop('google_refresh_token', None)
     public.pop('gcal_ical_url', None)
+    public['spotify_connected'] = bool(_spotify_refresh_token())
+    public['spotify_client_configured'] = bool(_spotify_client()['id'])
+    public.pop('spotify_client_secret', None)
+    public.pop('spotify_refresh_token', None)
     public['api_token_configured'] = bool(_api_token())
     public.pop('api_token', None)
     return public
@@ -1239,6 +1243,50 @@ def _list_installed_apps():
                 continue
     return [{'name': name, 'exe': exe}
             for name, exe in sorted(apps.items(), key=lambda item: item[0].lower())]
+
+
+def _music_dir():
+    path = os.path.join(STATE_DIR, 'music')
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
+def _list_music_tracks():
+    music_dir = _music_dir()
+    try:
+        names = [name for name in os.listdir(music_dir)
+                 if name.lower().endswith('.mp3')
+                 and os.path.isfile(os.path.join(music_dir, name))]
+    except OSError:
+        names = []
+    return sorted(names, key=str.lower)[:50]
+
+
+@app.route('/api/music/tracks', methods=['GET'])
+@rate_limit
+@_require_api_token
+def music_tracks():
+    """MP3 names in the music folder for the ESP32 player."""
+    log_request('GET /api/music/tracks')
+    return jsonify({'success': True, 'tracks': _list_music_tracks()})
+
+
+@app.route('/music/<path:filename>', methods=['GET'])
+@_require_api_token
+def music_file(filename):
+    """Stream one MP3 to the ESP32 (no directory traversal)."""
+    name = os.path.basename(filename or '')
+    if not name.lower().endswith('.mp3'):
+        return jsonify({'success': False, 'error': 'Only .mp3 files'}), 400
+    music_dir = _music_dir()
+    for listed in _list_music_tracks():
+        if listed == name:
+            log_request('GET /music', name)
+            return send_from_directory(music_dir, name, mimetype='audio/mpeg')
+    return jsonify({'success': False, 'error': 'Track not found'}), 404
 
 
 @app.route('/api/installed-apps', methods=['GET'])
@@ -2273,11 +2321,11 @@ def google_callback():
     error = request.args.get('error') or ''
     expiry = _google_oauth_states.pop(state, 0)
     if error:
-        return _google_callback_page(False, f'Google refused: {error}')
+        return _oauth_callback_page(False, f'Google refused: {error}')
     if not state or expiry < time_module.time():
-        return _google_callback_page(False, 'Expired or unknown login attempt - try Connect again')
+        return _oauth_callback_page(False, 'Expired or unknown login attempt - try Connect again')
     if not code:
-        return _google_callback_page(False, 'No authorization code received')
+        return _oauth_callback_page(False, 'No authorization code received')
     client = _google_client()
     try:
         response = requests.post(GOOGLE_TOKEN_URL, data={
@@ -2288,23 +2336,23 @@ def google_callback():
             'grant_type': 'authorization_code',
         }, timeout=15)
     except Exception as error:
-        return _google_callback_page(False, f'Token exchange failed: {error}')
+        return _oauth_callback_page(False, f'Token exchange failed: {error}')
     if response.status_code != 200:
-        return _google_callback_page(False, 'Google rejected the code - check client ID/secret')
+        return _oauth_callback_page(False, 'Google rejected the code - check client ID/secret')
     data = response.json()
     refresh = (data.get('refresh_token') or '').strip()
     if not refresh:
-        return _google_callback_page(False, 'Google gave no refresh token - remove app access and Connect again')
+        return _oauth_callback_page(False, 'Google gave no refresh token - remove app access and Connect again')
     global server_settings
     server_settings['google_refresh_token'] = refresh
     _persist_server_settings(server_settings)
     _google_access['token'] = data.get('access_token')
     _google_access['expiry'] = time_module.time() + int(data.get('expires_in', 3600))
     _google_events_cache['events'] = None
-    return _google_callback_page(True, 'Google Calendar connected - you can close this tab')
+    return _oauth_callback_page(True, 'Google Calendar connected - you can close this tab')
 
 
-def _google_callback_page(success, message):
+def _oauth_callback_page(success, message):
     color = '#28a745' if success else '#dc3545'
     title = 'Connected' if success else 'Failed'
     safe = (message or '').replace('&', '&amp;').replace('<', '&lt;')
@@ -2340,6 +2388,205 @@ def google_events():
     return jsonify({'success': True, 'events': events})
 
 
+# ===== Spotify (OAuth on server, ESP shows + controls playback) =====
+# Needs Spotify Premium + an active Spotify app (phone/PC): the API drives
+# YOUR devices, audio comes from them, the ESP is the remote + display.
+SPOTIFY_AUTH_URL = 'https://accounts.spotify.com/authorize'
+SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token'
+SPOTIFY_API_BASE = 'https://api.spotify.com/v1'
+SPOTIFY_SCOPE = ('user-read-playback-state user-modify-playback-state '
+                 'user-read-currently-playing')
+
+_spotify_oauth_states = {}
+_spotify_access = {'token': None, 'expiry': 0.0}
+
+
+def _spotify_client():
+    return {
+        'id': (server_settings.get('spotify_client_id', '')
+               or os.getenv('SPOTIFY_CLIENT_ID', '') or '').strip(),
+        'secret': (server_settings.get('spotify_client_secret', '')
+                   or os.getenv('SPOTIFY_CLIENT_SECRET', '') or '').strip(),
+    }
+
+
+def _spotify_refresh_token():
+    return (server_settings.get('spotify_refresh_token', '') or '').strip()
+
+
+def _spotify_redirect_uri():
+    return f'{request.host_url.rstrip("/")}/api/spotify/callback'
+
+
+def _spotify_fetch_access_token():
+    import requests
+    import time as time_module
+    if _spotify_access['token'] and time_module.time() < _spotify_access['expiry'] - 30:
+        return _spotify_access['token'], None
+    client = _spotify_client()
+    refresh = _spotify_refresh_token()
+    if not client['id'] or not client['secret']:
+        return None, 'Spotify client ID/secret not configured (Studio > System > Spotify)'
+    if not refresh:
+        return None, 'Spotify not connected (Studio > System > Spotify > Connect)'
+    try:
+        response = requests.post(SPOTIFY_TOKEN_URL, data={
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh,
+            'client_id': client['id'],
+            'client_secret': client['secret'],
+        }, timeout=15)
+    except Exception as error:
+        return None, f'Token refresh failed: {error}'
+    if response.status_code != 200:
+        return None, 'Spotify authorization expired - reconnect (Studio > System > Spotify)'
+    data = response.json()
+    _spotify_access['token'] = data.get('access_token')
+    _spotify_access['expiry'] = time_module.time() + int(data.get('expires_in', 3600))
+    if not _spotify_access['token']:
+        return None, 'Spotify did not return an access token'
+    return _spotify_access['token'], None
+
+
+def _spotify_api(method, path, **kwargs):
+    """Authenticated Spotify request. Returns (ok, data_or_error)."""
+    import requests
+    token, error = _spotify_fetch_access_token()
+    if error:
+        return False, error
+    try:
+        response = requests.request(
+            method, f'{SPOTIFY_API_BASE}{path}',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=15, **kwargs)
+    except Exception as error:
+        return False, f'Spotify request failed: {error}'
+    if response.status_code == 204:
+        return True, {}
+    if response.status_code == 404:
+        return False, 'No active Spotify device - open Spotify on phone/PC first'
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+    if response.status_code != 200:
+        message = ''
+        if isinstance(data, dict):
+            message = ((data.get('error') or {}).get('message')
+                       if isinstance(data.get('error'), dict)
+                       else data.get('error')) or ''
+        return False, message or 'Spotify request failed'
+    return True, data
+
+
+def _spotify_now():
+    """Current playback normalized for the ESP screen. (payload, error)."""
+    ok, data = _spotify_api('GET', '/me/player/currently-playing')
+    if not ok:
+        return None, data
+    item = (data or {}).get('item') or {}
+    artists = item.get('artists') or []
+    return {
+        'playing': bool((data or {}).get('is_playing')),
+        'track': (item.get('name') or '').strip(),
+        'artist': ', '.join(a.get('name', '') for a in artists if a.get('name')).strip(),
+        'album': ((item.get('album') or {}).get('name') or '').strip(),
+        'progress_ms': (data or {}).get('progress_ms') or 0,
+        'duration_ms': item.get('duration_ms') or 0,
+    }, None
+
+
+@app.route('/api/spotify/status', methods=['GET'])
+@_require_api_token
+def spotify_status():
+    return jsonify({
+        'success': True,
+        'connected': bool(_spotify_refresh_token()),
+        'client_configured': bool(_spotify_client()['id']),
+    })
+
+
+@app.route('/api/spotify/auth-url', methods=['GET'])
+@_require_api_token
+def spotify_auth_url():
+    import secrets
+    import time as time_module
+    from urllib.parse import urlencode
+    client = _spotify_client()
+    if not client['id']:
+        return jsonify({'success': False,
+                        'error': 'Set the Spotify client ID first (Studio > System > Spotify)'}), 400
+    state = secrets.token_urlsafe(24)
+    _spotify_oauth_states[state] = time_module.time() + 600
+    params = urlencode({
+        'client_id': client['id'],
+        'redirect_uri': _spotify_redirect_uri(),
+        'response_type': 'code',
+        'scope': SPOTIFY_SCOPE,
+        'state': state,
+    })
+    return jsonify({'success': True, 'url': f'{SPOTIFY_AUTH_URL}?{params}'})
+
+
+@app.route('/api/spotify/callback')
+def spotify_callback():
+    import base64
+    import requests
+    import time as time_module
+    code = (request.args.get('code') or '').strip()
+    state = (request.args.get('state') or '').strip()
+    error = request.args.get('error') or ''
+    expiry = _spotify_oauth_states.pop(state, 0)
+    if error:
+        return _oauth_callback_page(False, f'Spotify refused: {error}')
+    if not state or expiry < time_module.time():
+        return _oauth_callback_page(False, 'Expired login attempt - try Connect again')
+    if not code:
+        return _oauth_callback_page(False, 'No authorization code received')
+    client = _spotify_client()
+    basic = base64.b64encode(f"{client['id']}:{client['secret']}".encode()).decode()
+    try:
+        response = requests.post(SPOTIFY_TOKEN_URL, data={
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': _spotify_redirect_uri(),
+        }, headers={'Authorization': f'Basic {basic}'}, timeout=15)
+    except Exception as error:
+        return _oauth_callback_page(False, f'Token exchange failed: {error}')
+    if response.status_code != 200:
+        return _oauth_callback_page(False, 'Spotify rejected the code - check client ID/secret')
+    data = response.json()
+    refresh = (data.get('refresh_token') or '').strip()
+    if not refresh:
+        return _oauth_callback_page(False, 'Spotify gave no refresh token - try again')
+    global server_settings
+    server_settings['spotify_refresh_token'] = refresh
+    _persist_server_settings(server_settings)
+    _spotify_access['token'] = data.get('access_token')
+    _spotify_access['expiry'] = time_module.time() + int(data.get('expires_in', 3600))
+    return _oauth_callback_page(True, 'Spotify connected - you can close this tab')
+
+
+@app.route('/api/spotify/disconnect', methods=['POST'])
+@_require_api_token
+def spotify_disconnect():
+    global server_settings
+    server_settings.pop('spotify_refresh_token', None)
+    _persist_server_settings(server_settings)
+    _spotify_access['token'] = None
+    _spotify_access['expiry'] = 0.0
+    return jsonify({'success': True, 'message': 'Spotify disconnected'})
+
+
+@app.route('/api/spotify/now', methods=['GET'])
+@_require_api_token
+def spotify_now():
+    payload, error = _spotify_now()
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+    return jsonify({'success': True, 'now': payload})
+
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 @_require_api_token
 def handle_settings():
@@ -2354,7 +2601,7 @@ def handle_settings():
                    'prayer_method', 'clock_analog', 'show_temp',
                    'show_prayer', 'show_date', 'brightness', 'home_slots',
                    'google_client_id', 'google_client_secret',
-                   'gcal_ical_url'}
+                   'gcal_ical_url', 'spotify_client_id', 'spotify_client_secret'}
         for key, value in data.items():
             if key == 'home_slots' and isinstance(value, list):
                 cleaned = [str(item).strip() for item in value[:4]
@@ -3019,6 +3266,36 @@ def execute_action():
                 'latency': latency,
                 'error': None if success else message
             }), (200 if success else 400)
+
+        elif action_type == 'spotify':
+            operation = (action_config.get('operation', '')
+                         if isinstance(action_config, dict) else '').strip()
+            if operation == 'now':
+                payload, error = _spotify_now()
+                if error:
+                    return jsonify({'success': False, 'error': error}), 400
+                track = payload.get('track') or 'Nothing playing'
+                artist = payload.get('artist') or ''
+                message = f"{track} - {artist}".strip(' -')
+                return jsonify({'success': True, 'message': message, 'now': payload})
+            paths = {'play': ('PUT', '/me/player/play'),
+                     'pause': ('PUT', '/me/player/pause'),
+                     'next': ('POST', '/me/player/next'),
+                     'previous': ('POST', '/me/player/previous'),
+                     'toggle': (None, None)}
+            if operation == 'toggle':
+                current, error = _spotify_now()
+                if error:
+                    return jsonify({'success': False, 'error': error}), 400
+                operation = 'pause' if current.get('playing') else 'play'
+            if operation not in paths:
+                return jsonify({'success': False,
+                                'error': f'Unknown spotify operation: {operation}'}), 400
+            method, api_path = paths[operation]
+            ok, result = _spotify_api(method, api_path)
+            if not ok:
+                return jsonify({'success': False, 'error': result}), 400
+            return jsonify({'success': True, 'message': f'Spotify: {operation}'})
 
         elif action_type == 'calendar':
             events, error = _calendar_events(5)

@@ -76,6 +76,13 @@ describe('suggestLabelIcon', () => {
             { label: 'Game', icon: '🎬' });
     });
 
+    it('labels calendar and music', () => {
+        assert.deepEqual(suggest({ type: 'calendar' }),
+            { label: 'Calendar', icon: '📅' });
+        assert.deepEqual(suggest({ type: 'music' }),
+            { label: 'Music', icon: '🎵' });
+    });
+
     it('falls back safely', () => {
         assert.deepEqual(suggest(null), { label: '', icon: '' });
         assert.deepEqual(suggest({ type: 'macro' }), { label: 'Macro', icon: '⚙️' });

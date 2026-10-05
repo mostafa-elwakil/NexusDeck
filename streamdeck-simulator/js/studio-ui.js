@@ -299,6 +299,8 @@ class StudioUI {
                             <option value="docker_command">Docker Command</option>
                             <option value="switch_profile">Switch Profile (Cycle)</option>
                             <option value="calendar">Calendar (Google)</option>
+                            <option value="spotify">Spotify Control</option>
+                            <option value="music">Music (SD MP3)</option>
                             <option value="macro">Macro (multi-step)</option>
                             <option value="widget">Live Widget</option>
                         </select>
@@ -456,6 +458,23 @@ class StudioUI {
                         <button id="btn-google-disconnect" class="btn btn-secondary" type="button" style="flex: 1;">⏏ Forget</button>
                     </div>
                 </div>
+                <div class="system-row" style="display: block;">
+                    <div class="system-label">🎵 Spotify</div>
+                    <div class="system-hint" id="spotify-status-line">Not connected</div>
+                    <div class="system-hint" style="margin-top: 4px;">Needs Premium + Spotify open on phone/PC. Get a free Client ID at developer.spotify.com → app → redirect URI below.</div>
+                    <div class="system-hint" id="spotify-redirect-line" style="word-break: break-all;"></div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <input type="text" id="spotify-client-id" class="form-control" placeholder="Client ID" style="flex: 1; min-width: 0;">
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 6px;">
+                        <input type="password" id="spotify-client-secret" class="form-control" placeholder="Client secret (saved on server only)" style="flex: 1; min-width: 0;">
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                        <button id="btn-spotify-save" class="btn btn-secondary" type="button" style="flex: 1;">💾 Save</button>
+                        <button id="btn-spotify-connect" class="btn btn-secondary" type="button" style="flex: 1;">🔗 Connect</button>
+                        <button id="btn-spotify-disconnect" class="btn btn-secondary" type="button" style="flex: 1;">⏏ Forget</button>
+                    </div>
+                </div>
                 <div class="system-row state-collapsible" style="display: block;" id="state-history-section">
                     <button id="btn-toggle-state-history" class="state-toggle" type="button" aria-expanded="false">
                         <span class="system-label">💾 State folder & history</span>
@@ -499,6 +518,7 @@ class StudioUI {
             if (toggle) toggle.disabled = true;
         }
         await this.loadGoogleState();
+        await this.loadSpotifyState();
         await this.loadSecurityState();
         await this.loadStateAudit();
     }
@@ -753,6 +773,94 @@ class StudioUI {
             }
             this.showToast('Google Calendar disconnected');
             await this.loadGoogleState();
+        } catch (error) {
+            this.showToast(error.message, 3000);
+        }
+    }
+
+    async loadSpotifyState() {
+        const line = document.getElementById('spotify-status-line');
+        const idInput = document.getElementById('spotify-client-id');
+        const redirectLine = document.getElementById('spotify-redirect-line');
+        try {
+            const [statusRes, settingsRes] = await Promise.all([
+                fetch(`${this.actions.serverUrl}/api/spotify/status`),
+                fetch(`${this.actions.serverUrl}/api/settings`),
+            ]);
+            const status = await statusRes.json();
+            const settings = (await settingsRes.json()).settings || {};
+            if (idInput && !idInput.value) {
+                idInput.value = settings.spotify_client_id || '';
+            }
+            if (redirectLine) {
+                redirectLine.textContent =
+                    `Redirect URI for Spotify dashboard: ${this.actions.serverUrl}/api/spotify/callback`;
+            }
+            if (line) {
+                line.textContent = status.connected
+                    ? '✅ Connected — ESP buttons can control + show playback'
+                    : (status.client_configured
+                        ? 'Client saved — press Connect to link your account'
+                        : 'Not connected — create an app at developer.spotify.com first');
+            }
+        } catch (error) {
+            if (line) line.textContent = `Spotify status unavailable: ${error.message}`;
+        }
+    }
+
+    async saveSpotifyClient() {
+        const id = document.getElementById('spotify-client-id')?.value.trim() || '';
+        const secret = document.getElementById('spotify-client-secret')?.value.trim() || '';
+        if (!id) {
+            this.showToast('Paste the Spotify client ID first', 3000);
+            return;
+        }
+        const patch = { spotify_client_id: id };
+        if (secret) patch.spotify_client_secret = secret;
+        const response = await fetch(`${this.actions.serverUrl}/api/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+        });
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to save Spotify client');
+        }
+        const secretInput = document.getElementById('spotify-client-secret');
+        if (secretInput) secretInput.value = '';
+        this.showToast('Spotify client saved');
+        await this.loadSpotifyState();
+    }
+
+    async connectSpotify() {
+        try {
+            await this.saveSpotifyClient();
+        } catch (error) {
+            this.showToast(error.message, 3000);
+            return;
+        }
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/spotify/auth-url`);
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to start Spotify login');
+            }
+            window.open(result.url, '_blank', 'noopener,noreferrer');
+            this.showToast('Approve in the Spotify tab, then reopen System to refresh', 4000);
+        } catch (error) {
+            this.showToast(error.message, 3000);
+        }
+    }
+
+    async disconnectSpotify() {
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/spotify/disconnect`, { method: 'POST' });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to disconnect');
+            }
+            this.showToast('Spotify disconnected');
+            await this.loadSpotifyState();
         } catch (error) {
             this.showToast(error.message, 3000);
         }
@@ -1015,6 +1123,22 @@ class StudioUI {
 
         document.getElementById('btn-google-disconnect')?.addEventListener('click', () => {
             this.disconnectGoogle();
+        });
+
+        document.getElementById('btn-spotify-save')?.addEventListener('click', async () => {
+            try {
+                await this.saveSpotifyClient();
+            } catch (error) {
+                this.showToast(error.message, 3000);
+            }
+        });
+
+        document.getElementById('btn-spotify-connect')?.addEventListener('click', () => {
+            this.connectSpotify();
+        });
+
+        document.getElementById('btn-spotify-disconnect')?.addEventListener('click', () => {
+            this.disconnectSpotify();
         });
 
         document.getElementById('btn-quit-server')?.addEventListener('click', async () => {
@@ -1416,6 +1540,13 @@ class StudioUI {
                 return { label: 'Macro', icon: '⚙️' };
             case 'calendar':
                 return { label: 'Calendar', icon: '📅' };
+            case 'spotify': {
+                const names = { toggle: 'Spotify', now: 'Now Playing', play: 'Play',
+                    pause: 'Pause', next: 'Next', previous: 'Previous' };
+                return { label: names[action.operation] || 'Spotify', icon: '🎵' };
+            }
+            case 'music':
+                return { label: 'Music', icon: '🎵' };
             default:
                 return { label: titleCase(action.type) || 'Action', icon: '⚙️' };
         }
@@ -1687,6 +1818,26 @@ class StudioUI {
                     <p class="text-muted" style="font-size: 12px; color: #888;">Tap shows upcoming events on the ESP32 screen. Connect once in ⚙ System → Google Calendar.</p>
                 </div>
             `,
+            'music': `
+                <div class="form-group">
+                    <label>SD Music Player</label>
+                    <p class="text-muted" style="font-size: 12px; color: #888;">Tap opens the on-device player for .mp3 files in the SD card /mp3 folder. Fully offline.</p>
+                </div>
+            `,
+            'spotify': `
+                <div class="form-group">
+                    <label>Operation</label>
+                    <select id="action-spotify-operation" class="form-control">
+                        <option value="toggle">Play / Pause (toggle)</option>
+                        <option value="now">Show now playing</option>
+                        <option value="play">Play</option>
+                        <option value="pause">Pause</option>
+                        <option value="next">Next track</option>
+                        <option value="previous">Previous track</option>
+                    </select>
+                </div>
+                <p class="text-muted" style="font-size: 12px; color: #888;">Controls Spotify on your phone/PC (Premium + open app needed). Connect once in ⚙ System → Spotify.</p>
+            `,
             'macro': `
                 <div class="form-group">
                     <label>Steps (run in order)</label>
@@ -1727,6 +1878,17 @@ class StudioUI {
 
         if (actionType === 'keyboard_shortcut') {
             this.setupKeysCapture();
+        }
+
+        if (actionType === 'spotify') {
+            this.setupSpotifyConfig(existingAction);
+        }
+    }
+
+    setupSpotifyConfig(existingAction = null) {
+        const select = document.getElementById('action-spotify-operation');
+        if (select && existingAction?.operation) {
+            select.value = existingAction.operation;
         }
     }
 
@@ -2289,6 +2451,11 @@ class StudioUI {
             }),
             'switch_profile': () => ({ type: 'switch_profile', name: document.getElementById('action-profile-name').value }),
             'calendar': () => ({ type: 'calendar' }),
+            'spotify': () => ({
+                type: 'spotify',
+                operation: document.getElementById('action-spotify-operation')?.value || 'toggle',
+            }),
+            'music': () => ({ type: 'music' }),
             'macro': () => {
                 const steps = [];
                 document.querySelectorAll('#macro-steps-list .macro-step').forEach((row) => {

@@ -53,6 +53,8 @@ class ActionsEngine {
             'custom_script': this.customScript.bind(this),
             'switch_profile': this.switchProfile.bind(this),
             'calendar': this.showCalendar.bind(this),
+            'spotify': this.controlSpotify.bind(this),
+            'music': this.showMusic.bind(this),
             'custom': async (action, button) => {
                 if (typeof action.handler === 'function') {
                     return action.handler(action, button);
@@ -475,6 +477,37 @@ class ActionsEngine {
         });
         this.showNotification('Upcoming Events',
             lines.length ? lines.join('\n') : 'No upcoming events');
+    }
+
+    async showMusic(action, button) {
+        this.showNotification('Music Player',
+            'MP3 playback happens on the ESP32 (SD card /mp3 folder).');
+    }
+
+    async controlSpotify(action, button) {
+        if (!this.serverAvailable) {
+            throw new Error('Companion server required for Spotify');
+        }
+
+        const response = await fetch(`${this.serverUrl}/api/execute-action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                actionType: 'spotify',
+                actionData: JSON.stringify({ operation: action.operation || 'toggle' })
+            })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || 'Spotify action failed');
+        }
+        if (result.now) {
+            const track = result.now.track || 'Nothing playing';
+            const artist = result.now.artist ? ` - ${result.now.artist}` : '';
+            this.showNotification('Now Playing', `${track}${artist}`);
+        } else {
+            this.showNotification('Spotify', result.message || 'Done');
+        }
     }
 
     getHistory(limit = 50) {

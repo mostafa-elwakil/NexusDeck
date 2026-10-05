@@ -20,6 +20,12 @@
 #include <SPI.h>
 #include <Preferences.h>
 #include <WiFiManager.h>
+#include <qrcode.h>
+#include <DHT.h>
+#include <AudioFileSourceHTTPStream.h>
+#include <AudioFileSourceBuffer.h>
+#include <AudioGeneratorMP3.h>
+#include <AudioOutputI2S.h>
 #include "config.h"
 #undef SERVER_URL
 #define SERVER_URL serverIP.c_str()
@@ -30,6 +36,43 @@ String serverIP = "";
 String bgColorHex = "#1a1a2e";
 bool bgColorCustom = false;
 String apiToken = "";
+// MP3 player state (used by loop() and loadSettings())
+bool musicPageActive = false;
+unsigned long musicOpenedAt = 0;
+String mp3Tracks[12];
+uint8_t mp3Count = 0;
+int8_t mp3Index = -1;
+bool musicPlaying = false;
+float mp3Gain = 0.5;
+AudioGeneratorMP3* mp3Decoder = nullptr;
+AudioFileSourceHTTPStream* mp3Source = nullptr;
+AudioFileSourceBuffer* mp3Buff = nullptr;
+AudioOutputI2S* mp3Out = nullptr;
+
+bool offlineMode = false;
+float dhtTempC = NAN;
+float dhtHumidity = NAN;
+bool dhtOk = false;
+unsigned long lastDhtRead = 0;
+bool screenAwake = true;
+unsigned long lastMotionAt = 0;
+
+// ===== Onboard hardware (adjust to your wiring) =====
+// CYD SD slot: SCK=18 MISO=19 MOSI=23 CS=5 (VSPI defaults).
+#define SD_CS_PIN 5
+// Speaker JST on most CYD revisions = GPIO26 (verify with a multimeter).
+// MP3 output uses the internal DAC (pins 25+26), beeps use LEDC PWM.
+#define SPEAKER_PIN 26
+#define SPEAKER_CHANNEL 7
+// DHT22 temperature/humidity on a free header pin.
+#define DHT_PIN 22
+#define DHT_TYPE DHT22
+// PIR motion sensor (HIGH on motion) for auto wake/sleep.
+#define PIR_PIN 27
+#define PIR_IDLE_SEC 90
+#define ENABLE_CLICK true
+#define ENABLE_SD 0 // 1 = SD on (breaks touch on shared bus!)
+DHT dht(DHT_PIN, DHT_TYPE);
 
 void loadSettings() {
     preferences.begin("deck", false);
@@ -42,6 +85,8 @@ void loadSettings() {
     bgColorCustom = preferences.getBool("bg_custom", false);
     apiToken = preferences.getString("api_token", "");
     apiToken.trim();
+    mp3Gain = preferences.getFloat("mp3_gain", 0.5f);
+    if (!(mp3Gain >= 0.1f && mp3Gain <= 1.0f)) mp3Gain = 0.5f;
     preferences.end();
 }
 
@@ -165,6 +210,16 @@ uint16_t deckBackgroundColor = TFT_DARK_BG;
 int syncFailCount = 0;
 // Calendar events page state
 bool calPageActive = false;
+// Spotify now-playing page state (functions defined further below)
+bool spotPageActive = false;
+unsigned long spotOpenedAt = 0;
+unsigned long spotLastRefresh = 0;
+String spotTrack = "";
+String spotArtist = "";
+bool spotPlaying = false;
+long spotProgressMs = 0;
+long spotDurationMs = 0;
+String spotError = "";
 unsigned long calOpenedAt = 0;
 struct CalEvent {
     String when;
@@ -222,15 +277,20 @@ Button homePomo;
 // ===== Function Declarations =====
 void setupWiFi();
 void openSetupPortal();
+void drawSetupQR();
 void setupDisplay();
 void setupTouch();
 void drawButton(uint8_t index);
 void drawDeckBackground();
 void drawAllButtons();
 void handleTouch();
+void touchSelfTest();
+extern TS_Point touchPoint;
+extern bool touchDown;
 int8_t getTouchedButton(uint16_t x, uint16_t y);
 void executeButtonAction(uint8_t index);
 void syncProfile();
+void applyProfilePayload(const String& payload);
 void updateWidgets();
 void setButtonState(uint8_t index, uint8_t state);
 uint16_t parseColor(String colorHex);
@@ -249,6 +309,11 @@ void openCalendarPage();
 void closeCalendarPage();
 void drawCalendarPage();
 void handleCalTouch();
+void openSpotifyPage();
+void closeSpotifyPage();
+void drawSpotifyPage();
+void handleSpotTouch();
+bool spotFetchNow();
 void drawPomoPage();
 void handlePomoPageTouch();
 void pomoTapAction(uint8_t index);
@@ -259,6 +324,22 @@ void pomoResetBtn(Button& btn);
 void triggerBacklightAlert(unsigned long durationMs);
 void updateBacklight();
 void applyBacklight(bool on);
+void pumpBuzzer();
+void playToneSeq(const int* freqs, const int* durs, uint8_t len);
+void clickSound();
+void alarmSound(uint8_t kind);
+bool setupSD();
+void sdSaveProfile(const String& name, const String& payload);
+bool sdLoadProfile(const String& name);
+bool sdLoadLastProfile();
+void musicScanSD();
+void openMusicPage();
+void closeMusicPage();
+void drawMusicPage();
+void handleMusicTouch();
+void musicPump();
+void updateDHT();
+void updatePresence();
 void tickPomo(Button& btn, bool gridFeedback, uint8_t idx, bool& needsRedraw);
 bool anyOverlayActive();
 Button& pomoViewButton();
@@ -280,7 +361,19 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n=================================");
     Serial.println("NexusDeck ESP32-2432S028 Firmware");
+    Serial.println("FW-BUILD: stable-touch-v2");
     Serial.println("=================================\n");
+
+    // Pin scan runs before ANY peripheral claims pins (SD/TFT/touch).
+    pinMode(TOUCH_CS, OUTPUT);
+    digitalWrite(TOUCH_CS, HIGH);
+    touchSelfTest();
+
+#if ENABLE_SD
+    // SD shares the touch VSPI bus on this unit: enabling it kills touch.
+    // Kept for a future SoftSPI/independent-bus design.
+    setupSD();
+#endif
 
     // Initialize display FIRST
     setupDisplay();
@@ -292,10 +385,11 @@ void setup() {
     loadSettings();
     deckBackgroundColor = parseColor(bgColorHex);
 
-    // Connect to WiFi or launch NexusDeck-Setup portal
-    setupWiFi();
+    pinMode(PIR_PIN, INPUT_PULLDOWN);
+    dht.begin();
 
-    // Initialize buttons with defaults
+    // Initialize buttons with defaults (before WiFi: an SD offline profile
+    // loaded in setupWiFi() must survive instead of being wiped here)
     for (int i = 0; i < BUTTON_COUNT; i++) {
         buttons[i].label = String(i + 1);
         buttons[i].icon = "";
@@ -320,6 +414,9 @@ void setup() {
         buttons[i].pomoAlertUntil = 0;
         buttons[i].pomoLastTap = 0;
     }
+
+    // Connect to WiFi or launch NexusDeck-Setup portal
+    setupWiFi();
 
     // Standalone home-page pomodoro (independent of grid buttons)
     homePomo.label = "25:00";
@@ -354,12 +451,23 @@ void setup() {
 void loop() {
     // Backlight phase-end alert blinking (non-blocking)
     updateBacklight();
+    // Non-blocking buzzer sequences + MP3 streaming pump
+    pumpBuzzer();
+    musicPump();
+    // Proven path: library reads on the custom-mapped bus (first init wins).
+    // SD stays disabled (ENABLE_SD 0) so nothing ever remaps the bus.
+    if (touch.tirqTouched() && touch.touched()) {
+        touchPoint = touch.getPoint();
+        touchDown = true;
+    } else {
+        touchDown = false;
+    }
 
     // Hold top area/status bar for 2.5s to trigger NexusDeck-Setup portal anytime.
     // The timer MUST reset on release, otherwise any later short tap opens the portal.
     static unsigned long portalHoldStart = 0;
-    if (touch.touched()) {
-        TS_Point p = touch.getPoint();
+    if (touchDown) {
+        TS_Point p = touchPoint;
         if (p.y < 800) {
             if (portalHoldStart == 0) portalHoldStart = millis();
             if (millis() - portalHoldStart > 2500) {
@@ -375,7 +483,7 @@ void loop() {
 
     // Pomodoro press: release = tap (toggle/reset), hold 900ms = open dedicated page
     if (pomoPressCandidate >= 0) {
-        if (!touch.touched()) {
+        if (!touchDown) {
             uint8_t idx = pomoPressCandidate;
             pomoPressCandidate = -1;
             pomoTapAction(idx);
@@ -393,20 +501,41 @@ void loop() {
     processButtonResets();
     updateRunningIndicators();
 
-    // Handle touch input (pomodoro page, home page, calendar page, or grid)
+    // Handle touch input (pages or grid)
     if (pomoPageActive) {
         handlePomoPageTouch();
     } else if (homePageActive) {
         handleHomeTouch();
     } else if (calPageActive) {
         handleCalTouch();
+    } else if (musicPageActive) {
+        handleMusicTouch();
+    } else if (spotPageActive) {
+        handleSpotTouch();
     } else {
         handleTouch();
+    }
+    updatePresence();
+
+    // Music page auto-closes after 2 minutes idle (only when stopped)
+    if (musicPageActive && !musicPlaying && millis() - musicOpenedAt > 120000) {
+        closeMusicPage();
     }
 
     // Calendar page auto-closes after 2 minutes
     if (calPageActive && millis() - calOpenedAt > 120000) {
         closeCalendarPage();
+    }
+
+    // Spotify page: refresh now-playing every 10s, auto-close after 5 min
+    if (spotPageActive) {
+        if (millis() - spotLastRefresh > 10000) {
+            spotLastRefresh = millis();
+            if (spotFetchNow()) drawSpotifyPage();
+        }
+        if (millis() - spotOpenedAt > 300000) {
+            closeSpotifyPage();
+        }
     }
 
     // Sync profile from server
@@ -518,10 +647,10 @@ void setupDisplay() {
     Serial.println("Display initialized!");
 }
 
+
 // ===== Touch Setup =====
 void setupTouch() {
     Serial.println("Initializing touch screen...");
-    // CYD touch controller uses its own SPI wiring, separate from the TFT HSPI bus.
     SPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI);
     touch.begin();
     SPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI);
@@ -530,24 +659,58 @@ void setupTouch() {
 }
 
 // ===== Setup Portal (NexusDeck-Setup) =====
+// QR helpers: scan to join the setup WiFi instead of typing the password.
+#define SETUP_SSID "NexusDeck-Setup"
+#define SETUP_PASS "password123"
+#define QR_VERSION 5
+static uint8_t qrModules[256]; // fits version <= 6 (41x41 modules)
+
+bool drawQRCode(const char* text, int x, int y, int scale) {
+    QRCode code;
+    if (qrcode_initText(&code, qrModules, QR_VERSION, ECC_LOW, text) != 0) {
+        return false;
+    }
+    int size = code.size;
+    tft.fillRect(x - scale, y - scale,
+                 size * scale + scale * 2, size * scale + scale * 2, TFT_WHITE);
+    for (uint8_t row = 0; row < size; row++) {
+        for (uint8_t col = 0; col < size; col++) {
+            if (qrcode_getModule(&code, col, row)) {
+                tft.fillRect(x + col * scale, y + row * scale, scale, scale, TFT_BLACK);
+            }
+        }
+    }
+    return true;
+}
+
+void drawSetupQR() {
+    char wifiQR[96];
+    snprintf(wifiQR, sizeof(wifiQR), "WIFI:T:WPA;S:%s;P:%s;;", SETUP_SSID, SETUP_PASS);
+    drawQRCode(wifiQR, 12, 44, 4); // 37x37 modules * 4 = 148px
+}
+
 void openSetupPortal() {
     tft.fillScreen(deckBackgroundColor);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_YELLOW, TFT_DARK_BG);
-    tft.drawString("WiFi Setup Needed", SCREEN_WIDTH / 2, 35, 4);
+    tft.drawString("WiFi Setup", SCREEN_WIDTH / 2, 16, 4);
 
-    tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
-    tft.drawString("1. Connect Phone/PC to WiFi:", SCREEN_WIDTH / 2, 75, 2);
+    drawSetupQR();
 
-    tft.setTextColor(TFT_CYAN, TFT_DARK_BG);
-    tft.drawString("NexusDeck-Setup", SCREEN_WIDTH / 2, 105, 4);
-
-    tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
-    tft.drawString("Password: password123", SCREEN_WIDTH / 2, 135, 2);
-    tft.drawString("2. Set WiFi, Server IP & BG color", SCREEN_WIDTH / 2, 165, 2);
-
-    tft.setTextColor(TFT_GREEN, TFT_DARK_BG);
-    tft.drawString("Open: 192.168.4.1", SCREEN_WIDTH / 2, 195, 2);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("Scan to join WiFi", 172, 52, 2);
+    tft.setTextColor(TFT_CYAN, deckBackgroundColor);
+    tft.drawString(SETUP_SSID, 172, 76, 2);
+    tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+    tft.drawString("password123", 172, 98, 1);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("Then open:", 172, 124, 2);
+    tft.setTextColor(TFT_GREEN, deckBackgroundColor);
+    tft.drawString("192.168.4.1", 172, 146, 2);
+    tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+    tft.drawString("Set WiFi + Server IP", 172, 172, 1);
+    tft.setTextDatum(MC_DATUM);
 
     Serial.println("Starting config portal: NexusDeck-Setup");
     WiFiManager wm;
@@ -649,9 +812,17 @@ void setupWiFi() {
         tft.drawString("Connecting to WiFi...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 2);
 
         if (!wm.autoConnect("NexusDeck-Setup", "password123")) {
-            Serial.println("WiFi connection failed, restarting...");
-            delay(1000);
-            ESP.restart();
+            // No WiFi: fall back to the SD profile and run offline instead
+            // of reboot-looping, so music/alarms keep working standalone.
+            if (sdLoadLastProfile()) {
+                offlineMode = true;
+                wifiConnected = false;
+                Serial.println("Offline mode: SD profile loaded");
+            } else {
+                Serial.println("WiFi connection failed, restarting...");
+                delay(1000);
+                ESP.restart();
+            }
         }
     }
 
@@ -805,9 +976,46 @@ void drawDeckBackground() {
 }
 
 // ===== Handle Touch Input =====
+unsigned long lastRealTouchMs = 0;
+TS_Point touchPoint(0, 0, 0);
+bool touchDown = false;
+
+
+void touchSelfTest() {
+    // Boot touch check via the proven library path. HOLD the screen when
+    // told; verdict by pressure VARIANCE (a live chip swings by hundreds).
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawString("TOUCH AND HOLD", SCREEN_WIDTH / 2, 100, 4);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("15 seconds", SCREEN_WIDTH / 2, 140, 2);
+    Serial.println("TOUCH-TEST: TOUCH AND HOLD NOW (15s)...");
+    uint16_t zmin = 65535, zmax = 0;
+    uint8_t presses = 0;
+    unsigned long until = millis() + 15000;
+    while (millis() < until) {
+        if (touch.tirqTouched() && touch.touched()) {
+            TS_Point p = touch.getPoint();
+            if (p.x < 8000 && p.y < 8000) {
+                presses++;
+                uint16_t z = (uint16_t)p.z;
+                if (z < zmin) zmin = z;
+                if (z > zmax) zmax = z;
+            }
+        }
+        delay(50);
+    }
+    tft.fillScreen(deckBackgroundColor);
+    uint16_t spread = (zmax >= zmin && presses > 0) ? (uint16_t)(zmax - zmin) : 0;
+    Serial.printf("TOUCH-TEST: presses=%u zmin=%u zmax=%u spread=%u verdict=%s\n",
+                  presses, zmin == 65535 ? 0 : zmin, zmax, spread,
+                  (presses > 3 && spread > 50) ? "ALIVE" : "silent");
+}
+
 void handleTouch() {
-    if (touch.tirqTouched() && touch.touched()) {
-        TS_Point p = touch.getPoint();
+    if (touchDown) {
+        TS_Point p = touchPoint;
 
         // Map calibrated raw touch coordinates to the rotated landscape screen.
         uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
@@ -866,6 +1074,7 @@ void handleTouch() {
 
             setButtonState(buttonIndex, 1);
             drawButton(buttonIndex);
+            clickSound();
         }
     } else {
         // Finger released: run the pending tap unless a swipe already fired
@@ -1003,6 +1212,20 @@ void executeButtonAction(uint8_t index) {
         return;
     }
 
+    if (btn.actionType == "spotify") {
+        Serial.println("Opening Spotify...");
+        openSpotifyPage();
+        setButtonState(index, 0);
+        return;
+    }
+
+    if (btn.actionType == "music") {
+        Serial.println("Opening music player...");
+        openMusicPage();
+        setButtonState(index, 0);
+        return;
+    }
+
     // Send action to server
     setButtonState(index, 2); // Running state
     drawButton(index);
@@ -1054,6 +1277,144 @@ void executeButtonAction(uint8_t index) {
 }
 
 // ===== Sync Profile from Server =====
+// ===== Apply Profile Payload (shared by WiFi sync + SD load) =====
+void applyProfilePayload(const String& payload) {
+    DynamicJsonDocument doc(12288);
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (error) {
+        Serial.print("Profile JSON parse failed: ");
+        Serial.println(error.c_str());
+    } else if (doc.containsKey("buttons")) {
+        if (doc.containsKey("name")) {
+            currentProfileName = doc["name"].as<String>();
+        }
+        if (!bgColorCustom) {
+            const char* backgroundHex = "#1a1a2e";
+            if (doc.containsKey("backgroundColor")) {
+                backgroundHex = doc["backgroundColor"] | "#1a1a2e";
+            } else if (doc.containsKey("background")) {
+                backgroundHex = doc["background"] | "#1a1a2e";
+            }
+            deckBackgroundColor = parseColor(String(backgroundHex));
+        }
+
+        JsonArray buttonsArray = doc["buttons"];
+        String profileSignature;
+        profileSignature += String(deckBackgroundColor) + "|";
+
+        for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+            if (i >= buttonsArray.size()) {
+                buttons[i].label = String(i + 1);
+                buttons[i].icon = "";
+                buttons[i].color = TFT_DARK_BG;
+                buttons[i].actionType = "";
+                buttons[i].actionData = "{}";
+                buttons[i].hasWidget = false;
+                buttons[i].widgetType = "";
+                buttons[i].timerRunning = false;
+                buttons[i].timerRemaining = 0;
+                buttons[i].pomoPhase = 0;
+                buttons[i].pomoDone = 0;
+                buttons[i].pomoTask = "";
+                buttons[i].pomoAlert = false;
+                continue;
+            }
+
+            JsonObject btnObj = buttonsArray[i];
+
+            buttons[i].label = btnObj["label"] | "";
+            buttons[i].icon = btnObj["icon"] | "";
+            buttons[i].color = parseColor(btnObj["color"] | "#1a1a2e");
+            buttons[i].hasWidget = false;
+            buttons[i].widgetType = "";
+            buttons[i].pomoTask = "";
+
+            if (btnObj.containsKey("action") && btnObj["action"].is<JsonObject>()) {
+                JsonObject actionObj = btnObj["action"].as<JsonObject>();
+                buttons[i].actionType = actionObj["type"] | "";
+                buttons[i].actionData = "";
+                serializeJson(actionObj, buttons[i].actionData);
+            } else {
+                buttons[i].actionType = "";
+                buttons[i].actionData = "{}";
+            }
+
+            if (btnObj.containsKey("widget") && btnObj["widget"].is<JsonObject>()) {
+                buttons[i].hasWidget = true;
+                buttons[i].widgetType = btnObj["widget"]["type"] | "";
+                if (buttons[i].widgetType == "timer") {
+                    if (!buttons[i].timerRunning) {
+                        int colonIdx = buttons[i].label.indexOf(':');
+                        if (colonIdx > 0) {
+                            int m = buttons[i].label.substring(0, colonIdx).toInt();
+                            int s = buttons[i].label.substring(colonIdx + 1).toInt();
+                            buttons[i].timerDuration = (m * 60) + s;
+                        }
+                        if (buttons[i].timerDuration <= 0) {
+                            buttons[i].timerDuration = 300;
+                        }
+                        buttons[i].timerRemaining = buttons[i].timerDuration;
+                        char buf[16];
+                        snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                        buttons[i].label = String(buf);
+                        if (buttons[i].icon.length() == 0) {
+                            buttons[i].icon = "PLAY";
+                        }
+                    }
+                } else if (buttons[i].widgetType == "stopwatch") {
+                    if (!buttons[i].timerRunning && buttons[i].timerRemaining == 0) {
+                        buttons[i].label = "00:00";
+                        if (buttons[i].icon.length() == 0) {
+                            buttons[i].icon = "PLAY";
+                        }
+                    }
+                } else if (buttons[i].widgetType == "pomodoro") {
+                    int workMin = 25, shortMin = 5, longMin = 15, cyc = 4;
+                    buttons[i].pomoTask = "";
+                    if (!btnObj["widget"]["config"].isNull()) {
+                        workMin = btnObj["widget"]["config"]["workMinutes"] | 25;
+                        shortMin = btnObj["widget"]["config"]["shortBreakMinutes"] | 5;
+                        longMin = btnObj["widget"]["config"]["longBreakMinutes"] | 15;
+                        cyc = btnObj["widget"]["config"]["sessionsBeforeLong"] | 4;
+                        buttons[i].pomoTask = btnObj["widget"]["config"]["task"] | "";
+                        buttons[i].pomoTask.trim();
+                    }
+                    buttons[i].pomoWorkSec = workMin * 60;
+                    buttons[i].pomoShortSec = shortMin * 60;
+                    buttons[i].pomoLongSec = longMin * 60;
+                    buttons[i].pomoCycle = (cyc > 0) ? cyc : 4;
+                    if (!buttons[i].timerRunning) {
+                        buttons[i].pomoPhase = 0;
+                        buttons[i].pomoDone = 0;
+                        buttons[i].timerRemaining = buttons[i].pomoWorkSec;
+                        buttons[i].pomoAlert = false;
+                        char buf[16];
+                        snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
+                        buttons[i].label = String(buf);
+                        if (buttons[i].icon.length() == 0) {
+                            buttons[i].icon = "PLAY";
+                        }
+                    }
+                }
+            }
+
+            profileSignature += buttons[i].label + "|" + buttons[i].icon + "|" +
+                buttons[i].actionType + "|" + buttons[i].actionData + "|" +
+                String(buttons[i].color) + "|" + buttons[i].widgetType + ";";
+        }
+
+        static String lastProfileSignature;
+        if (profileSignature != lastProfileSignature) {
+            lastProfileSignature = profileSignature;
+            if (!anyOverlayActive()) {
+                drawAllButtons();
+            }
+            Serial.println("Profile synced successfully");
+        }
+    }
+}
+
 void syncProfile() {
     if (!wifiConnected) return;
 
@@ -1102,140 +1463,8 @@ void syncProfile() {
             }
             String payload = http.getString();
 
-            DynamicJsonDocument doc(12288);
-            DeserializationError error = deserializeJson(doc, payload);
-
-            if (error) {
-                Serial.print("Profile JSON parse failed: ");
-                Serial.println(error.c_str());
-            } else if (doc.containsKey("buttons")) {
-                if (doc.containsKey("name")) {
-                    currentProfileName = doc["name"].as<String>();
-                }
-                if (!bgColorCustom) {
-                    const char* backgroundHex = "#1a1a2e";
-                    if (doc.containsKey("backgroundColor")) {
-                        backgroundHex = doc["backgroundColor"] | "#1a1a2e";
-                    } else if (doc.containsKey("background")) {
-                        backgroundHex = doc["background"] | "#1a1a2e";
-                    }
-                    deckBackgroundColor = parseColor(String(backgroundHex));
-                }
-
-                JsonArray buttonsArray = doc["buttons"];
-                String profileSignature;
-                profileSignature += String(deckBackgroundColor) + "|";
-
-                for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
-                    if (i >= buttonsArray.size()) {
-                        buttons[i].label = String(i + 1);
-                        buttons[i].icon = "";
-                        buttons[i].color = TFT_DARK_BG;
-                        buttons[i].actionType = "";
-                        buttons[i].actionData = "{}";
-                        buttons[i].hasWidget = false;
-                        buttons[i].widgetType = "";
-                        buttons[i].timerRunning = false;
-                        buttons[i].timerRemaining = 0;
-                        buttons[i].pomoPhase = 0;
-                        buttons[i].pomoDone = 0;
-                        buttons[i].pomoTask = "";
-                        buttons[i].pomoAlert = false;
-                        continue;
-                    }
-
-                    JsonObject btnObj = buttonsArray[i];
-
-                    buttons[i].label = btnObj["label"] | "";
-                    buttons[i].icon = btnObj["icon"] | "";
-                    buttons[i].color = parseColor(btnObj["color"] | "#1a1a2e");
-                    buttons[i].hasWidget = false;
-                    buttons[i].widgetType = "";
-                    buttons[i].pomoTask = "";
-
-                    if (btnObj.containsKey("action") && btnObj["action"].is<JsonObject>()) {
-                        JsonObject actionObj = btnObj["action"].as<JsonObject>();
-                        buttons[i].actionType = actionObj["type"] | "";
-                        buttons[i].actionData = "";
-                        serializeJson(actionObj, buttons[i].actionData);
-                    } else {
-                        buttons[i].actionType = "";
-                        buttons[i].actionData = "{}";
-                    }
-
-                    if (btnObj.containsKey("widget") && btnObj["widget"].is<JsonObject>()) {
-                        buttons[i].hasWidget = true;
-                        buttons[i].widgetType = btnObj["widget"]["type"] | "";
-                        if (buttons[i].widgetType == "timer") {
-                            if (!buttons[i].timerRunning) {
-                                int colonIdx = buttons[i].label.indexOf(':');
-                                if (colonIdx > 0) {
-                                    int m = buttons[i].label.substring(0, colonIdx).toInt();
-                                    int s = buttons[i].label.substring(colonIdx + 1).toInt();
-                                    buttons[i].timerDuration = (m * 60) + s;
-                                }
-                                if (buttons[i].timerDuration <= 0) {
-                                    buttons[i].timerDuration = 300;
-                                }
-                                buttons[i].timerRemaining = buttons[i].timerDuration;
-                                char buf[16];
-                                snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
-                                buttons[i].label = String(buf);
-                                if (buttons[i].icon.length() == 0) {
-                                    buttons[i].icon = "PLAY";
-                                }
-                            }
-                        } else if (buttons[i].widgetType == "stopwatch") {
-                            if (!buttons[i].timerRunning && buttons[i].timerRemaining == 0) {
-                                buttons[i].label = "00:00";
-                                if (buttons[i].icon.length() == 0) {
-                                    buttons[i].icon = "PLAY";
-                                }
-                            }
-                        } else if (buttons[i].widgetType == "pomodoro") {
-                            int workMin = 25, shortMin = 5, longMin = 15, cyc = 4;
-                            buttons[i].pomoTask = "";
-                            if (!btnObj["widget"]["config"].isNull()) {
-                                workMin = btnObj["widget"]["config"]["workMinutes"] | 25;
-                                shortMin = btnObj["widget"]["config"]["shortBreakMinutes"] | 5;
-                                longMin = btnObj["widget"]["config"]["longBreakMinutes"] | 15;
-                                cyc = btnObj["widget"]["config"]["sessionsBeforeLong"] | 4;
-                                buttons[i].pomoTask = btnObj["widget"]["config"]["task"] | "";
-                                buttons[i].pomoTask.trim();
-                            }
-                            buttons[i].pomoWorkSec = workMin * 60;
-                            buttons[i].pomoShortSec = shortMin * 60;
-                            buttons[i].pomoLongSec = longMin * 60;
-                            buttons[i].pomoCycle = (cyc > 0) ? cyc : 4;
-                            if (!buttons[i].timerRunning) {
-                                buttons[i].pomoPhase = 0;
-                                buttons[i].pomoDone = 0;
-                                buttons[i].timerRemaining = buttons[i].pomoWorkSec;
-                                buttons[i].pomoAlert = false;
-                                char buf[16];
-                                snprintf(buf, sizeof(buf), "%02d:%02d", buttons[i].timerRemaining / 60, buttons[i].timerRemaining % 60);
-                                buttons[i].label = String(buf);
-                                if (buttons[i].icon.length() == 0) {
-                                    buttons[i].icon = "PLAY";
-                                }
-                            }
-                        }
-                    }
-
-                    profileSignature += buttons[i].label + "|" + buttons[i].icon + "|" +
-                        buttons[i].actionType + "|" + buttons[i].actionData + "|" +
-                        String(buttons[i].color) + "|" + buttons[i].widgetType + ";";
-                }
-
-                static String lastProfileSignature;
-                if (profileSignature != lastProfileSignature) {
-                    lastProfileSignature = profileSignature;
-                    if (!anyOverlayActive()) {
-                        drawAllButtons();
-                    }
-                    Serial.println("Profile synced successfully");
-                }
-            }
+            applyProfilePayload(payload);
+            sdSaveProfile(currentProfileName, payload);
         }
     } else {
         serverAvailable = false;
@@ -1260,6 +1489,7 @@ void updateWidgets() {
         updateSystemStats();
         lastStatsFetch = millis();
     }
+    updateDHT();
 
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         if (buttons[i].hasWidget) {
@@ -1346,6 +1576,160 @@ void updateSystemStats() {
 }
 
 // ===== Backlight Alert (phase-end notification) =====
+// ===== Buzzer (non-blocking tone sequences over LEDC PWM) =====
+struct ToneStep {
+    int freq; // 0 = silence
+    int ms;
+};
+static const ToneStep SEQ_CLICK[] = {{2500, 30}, {0, 0}};
+static const ToneStep SEQ_ALARM_PHASE[] = {{880, 150}, {0, 100}, {880, 150}, {0, 100}, {880, 300}, {0, 0}};
+static const ToneStep SEQ_ALARM_TIMER[] = {{1200, 120}, {0, 80}, {1200, 120}, {0, 80}, {1200, 120}, {0, 80}, {1200, 400}, {0, 0}};
+static const ToneStep SEQ_ERROR[] = {{300, 200}, {0, 0}};
+
+struct TonePlayer {
+    const ToneStep* seq = nullptr;
+    uint8_t pos = 0;
+    unsigned long until = 0;
+    bool sounding = false;
+};
+TonePlayer tonePlayer;
+
+void toneOn(int freq) {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(SPEAKER_PIN, freq, 8);
+    ledcWriteTone(SPEAKER_PIN, freq);
+#else
+    ledcSetup(SPEAKER_CHANNEL, freq, 8);
+    ledcAttachPin(SPEAKER_PIN, SPEAKER_CHANNEL);
+    ledcWriteTone(SPEAKER_CHANNEL, freq);
+#endif
+}
+
+void toneOff() {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcWriteTone(SPEAKER_PIN, 0);
+    ledcDetach(SPEAKER_PIN);
+#else
+    ledcWriteTone(SPEAKER_CHANNEL, 0);
+    ledcDetachPin(SPEAKER_PIN);
+#endif
+}
+
+void playSeq(const ToneStep* seq) {
+    tonePlayer.seq = seq;
+    tonePlayer.pos = 0;
+    tonePlayer.until = 0;
+    tonePlayer.sounding = false;
+}
+
+void pumpBuzzer() {
+    if (!tonePlayer.seq) return;
+    unsigned long now = millis();
+    if (tonePlayer.until != 0 && (long)(now - tonePlayer.until) < 0) return;
+    if (tonePlayer.sounding) {
+        toneOff();
+        tonePlayer.sounding = false;
+    }
+    ToneStep step = tonePlayer.seq[tonePlayer.pos];
+    if (step.ms <= 0) {
+        tonePlayer.seq = nullptr;
+        tonePlayer.until = 0;
+        return;
+    }
+    if (step.freq > 0) {
+        toneOn(step.freq);
+        tonePlayer.sounding = true;
+    }
+    tonePlayer.until = now + step.ms;
+    tonePlayer.pos++;
+}
+
+void clickSound() {
+    if (ENABLE_CLICK) playSeq(SEQ_CLICK);
+}
+
+// ===== DHT22 comfort sensor: real room temp/humidity =====
+void updateDHT() {
+    if (millis() - lastDhtRead < 30000) return;
+    lastDhtRead = millis();
+    float temp = dht.readTemperature();
+    float hum = dht.readHumidity();
+    if (!isnan(temp) && !isnan(hum)) {
+        dhtTempC = temp;
+        dhtHumidity = hum;
+        dhtOk = true;
+        homeTemp = String((int)(temp >= 0 ? temp + 0.5f : temp - 0.5f)) + "C";
+        Serial.printf("Room: %.1fC %.0f%%\n", temp, hum);
+    } else if (!dhtOk) {
+        Serial.println("DHT not detected (optional)");
+    }
+}
+
+// ===== PIR presence: wake on motion, sleep the screen when idle =====
+bool pirSeenMotion = false;
+
+void updatePresence() {
+    if (digitalRead(PIR_PIN) == HIGH) pirSeenMotion = true;
+    bool motion = (digitalRead(PIR_PIN) == HIGH) || touchDown;
+    if (motion) {
+        lastMotionAt = millis();
+        if (!screenAwake) {
+            screenAwake = true;
+            applyBacklight(true);
+            Serial.println("Presence: wake");
+        }
+    } else if (screenAwake && !backlightAlert && pirSeenMotion &&
+               millis() - lastMotionAt > (unsigned long)PIR_IDLE_SEC * 1000UL) {
+        screenAwake = false;
+        applyBacklight(false);
+        Serial.println("Presence: sleep");
+    }
+}
+
+// ===== SD card (profiles backup/offline + MP3 library) =====
+bool sdReady = false;
+
+String sdSafeName(const String& name) {
+    String safe;
+    for (unsigned int i = 0; i < name.length() && safe.length() < 48; i++) {
+        char c = name.charAt(i);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+            safe += c;
+        }
+    }
+    if (safe.length() == 0) safe = "profile";
+    return safe;
+}
+
+bool setupSD() {
+    // SD slot shares the touch SPI bus on this unit and cannot coexist
+    // with it: music now streams from the companion over WiFi instead.
+    // (Kept as a stub so callers stay untouched.)
+    sdReady = false;
+    Serial.println("SD: disabled (music streams from server)");
+    return false;
+}
+
+void sdSaveProfile(const String& name, const String& payload) {
+    (void)name;
+    (void)payload;
+    // Disabled: SD shares the touch bus on this unit (see setupSD).
+}
+
+bool sdLoadProfile(const String& name) {
+    (void)name;
+    return false;
+}
+
+bool sdLoadLastProfile() {
+    return false;
+}
+
+void alarmSound(uint8_t kind) {
+    if (kind == 1) playSeq(SEQ_ALARM_TIMER);
+    else playSeq(SEQ_ALARM_PHASE);
+}
+
 void applyBacklight(bool on) {
     analogWrite(TFT_BACKLIGHT, on ? screenBrightness : 0);
 }
@@ -1415,6 +1799,7 @@ void tickPomo(Button& btn, bool gridFeedback, uint8_t idx, bool& needsRedraw) {
             btn.pomoAlert = true;
             btn.pomoAlertUntil = millis() + 6000;
             triggerBacklightAlert(6000);
+            alarmSound(btn.widgetType == "timer" ? 1 : 0);
             pomoPageDirty = true;
             if (gridFeedback) {
                 setButtonState(idx, 3);
@@ -1499,7 +1884,7 @@ void pomoTapAction(uint8_t index) {
 
 // ===== Pomodoro Dedicated Page =====
 bool anyOverlayActive() {
-    return pomoPageActive || homePageActive || calPageActive;
+    return pomoPageActive || homePageActive || calPageActive || musicPageActive || spotPageActive;
 }
 
 void openPomoPage(uint8_t index) {
@@ -1677,12 +2062,388 @@ void closeCalendarPage() {
     Serial.println("Calendar page closed");
 }
 
-void handleCalTouch() {
+// ===== Spotify now-playing page (control + display) =====
+bool spotFetchNow() {
+    if (!wifiConnected) {
+        spotError = "No WiFi";
+        return false;
+    }
+    HTTPClient h;
+    h.setTimeout(10000);
+    espHttpBegin(h, String(SERVER_URL) + "/api/spotify/now");
+    if (h.GET() != 200) {
+        spotError = "Server error";
+        h.end();
+        return false;
+    }
+    DynamicJsonDocument doc(2048);
+    if (deserializeJson(doc, h.getString())) {
+        h.end();
+        spotError = "Bad response";
+        return false;
+    }
+    h.end();
+    if (!doc["success"]) {
+        spotError = doc["error"] | "Not connected";
+        return false;
+    }
+    JsonObject now = doc["now"];
+    spotTrack = now["track"] | "";
+    spotArtist = now["artist"] | "";
+    spotPlaying = now["playing"] | false;
+    spotProgressMs = now["progress_ms"] | 0;
+    spotDurationMs = now["duration_ms"] | 0;
+    spotError = "";
+    return true;
+}
+
+bool spotSendOperation(const String& operation) {
+    if (!wifiConnected) return false;
+    HTTPClient h;
+    h.setTimeout(10000);
+    espHttpBegin(h, String(SERVER_URL) + "/api/execute-action");
+    h.addHeader("Content-Type", "application/json");
+    DynamicJsonDocument doc(256);
+    doc["actionType"] = "spotify";
+    doc["actionData"] = String("{\"operation\":\"") + operation + "\"}";
+    String payload;
+    serializeJson(doc, payload);
+    int code = h.POST(payload);
+    h.end();
+    return code == 200;
+}
+
+void drawSpotifyPage() {
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("SPOTIFY", SCREEN_WIDTH / 2, 12, 2);
+    tft.drawFastHLine(10, 28, SCREEN_WIDTH - 20, TFT_DARKGREY);
+    if (spotError.length() > 0) {
+        tft.setTextColor(TFT_YELLOW, deckBackgroundColor);
+        tft.drawString(truncateText(spotError, 26), SCREEN_WIDTH / 2, 60, 2);
+        tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+        tft.drawString("Connect in Studio > System", SCREEN_WIDTH / 2, 84, 1);
+        tft.drawString("tap to close", SCREEN_WIDTH / 2, 220, 1);
+        return;
+    }
+    tft.setTextColor(spotPlaying ? TFT_GREEN : TFT_LIGHTGREY, deckBackgroundColor);
+    tft.drawString(spotPlaying ? "PLAYING" : "PAUSED", SCREEN_WIDTH / 2, 42, 2);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString(truncateText(spotTrack.length() ? spotTrack : "Nothing playing", 24),
+                   SCREEN_WIDTH / 2, 68, 2);
+    tft.setTextColor(TFT_CYAN, deckBackgroundColor);
+    tft.drawString(truncateText(spotArtist, 26), SCREEN_WIDTH / 2, 88, 2);
+    if (spotDurationMs > 0) {
+        float frac = (float)spotProgressMs / (float)spotDurationMs;
+        if (frac < 0) frac = 0;
+        if (frac > 1) frac = 1;
+        int barX = 40, barW = SCREEN_WIDTH - 80, barY = 108, barH = 8;
+        tft.drawRect(barX, barY, barW, barH, TFT_DARKGREY);
+        tft.fillRect(barX + 1, barY + 1, (int)((barW - 2) * frac), barH - 2, TFT_GREEN);
+    }
+    // Transport: PREV | PLAY/PAUSE | NEXT | BACK
+    const char* keys[4] = {"|<", spotPlaying ? "PAUSE" : "PLAY", ">|", "BACK"};
+    const int xs[4] = {8, 72, 170, 234};
+    const int ws[4] = {60, 94, 60, 78};
+    for (uint8_t b = 0; b < 4; b++) {
+        tft.fillRoundRect(xs[b], 150, ws[b], 44, 6, tft.color565(40, 40, 60));
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_WHITE, tft.color565(40, 40, 60));
+        tft.drawString(keys[b], xs[b] + ws[b] / 2, 172, 2);
+    }
+    tft.setTextColor(TFT_DARKGREY, deckBackgroundColor);
+    tft.drawString("tap outside = close", SCREEN_WIDTH / 2, 228, 1);
+}
+
+void openSpotifyPage() {
+    spotPageActive = true;
+    spotOpenedAt = millis();
+    spotLastRefresh = 0;
+    ignoreTouchUntil = millis() + 400;
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("Loading Spotify...", SCREEN_WIDTH / 2, 60, 2);
+    spotFetchNow();
+    drawSpotifyPage();
+    Serial.println("Spotify page opened");
+}
+
+void closeSpotifyPage() {
+    spotPageActive = false;
+    drawAllButtons();
+    drawStatusBar();
+    Serial.println("Spotify page closed");
+}
+
+void handleSpotTouch() {
     if (!touch.tirqTouched() || !touch.touched()) return;
+    if (millis() < ignoreTouchUntil) return;
+    static unsigned long spotTouchDebounce = 0;
+    if (millis() < spotTouchDebounce) return;
+    TS_Point p = touch.getPoint();
+    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
+    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    spotTouchDebounce = millis() + 300;
+    ignoreTouchUntil = millis() + 400;
+    if (y >= 150 && y <= 194) {
+        String op = "";
+        if (x < 72) op = "previous";
+        else if (x < 170) op = "toggle";
+        else if (x < 234) op = "next";
+        else {
+            closeSpotifyPage();
+            return;
+        }
+        if (spotSendOperation(op)) {
+            delay(400);
+            spotFetchNow();
+        }
+        drawSpotifyPage();
+        return;
+    }
+    closeSpotifyPage();
+}
+
+// ===== MP3 player (SD /mp3, independent of the PC) =====
+void musicEnsureOutput() {
+    if (!mp3Out) {
+        mp3Out = new AudioOutputI2S(0, 1); // internal DAC (pins 25+26)
+        mp3Out->SetOutputModeMono(true);
+        mp3Out->SetGain(mp3Gain);
+    }
+}
+
+String urlEncodeName(const String& name) {
+    const char* hex = "0123456789ABCDEF";
+    String out;
+    for (unsigned int i = 0; i < name.length(); i++) {
+        char c = name.charAt(i);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += c;
+        } else {
+            out += '%';
+            out += hex[(c >> 4) & 0xF];
+            out += hex[c & 0xF];
+        }
+    }
+    return out;
+}
+
+void musicScanSD() {
+    // Track list comes from the companion (Documents/NexusDeck/music).
+    mp3Count = 0;
+    mp3Index = -1;
+    if (!wifiConnected) return;
+    HTTPClient h;
+    h.setTimeout(8000);
+    espHttpBegin(h, String(SERVER_URL) + "/api/music/tracks");
+    if (h.GET() != 200) {
+        h.end();
+        return;
+    }
+    DynamicJsonDocument doc(8192);
+    if (deserializeJson(doc, h.getString())) {
+        h.end();
+        return;
+    }
+    h.end();
+    if (!doc["success"]) return;
+    JsonArray arr = doc["tracks"];
+    for (uint8_t i = 0; i < 12 && i < arr.size(); i++) {
+        mp3Tracks[mp3Count++] = arr[i].as<String>();
+    }
+}
+
+void musicStop() {
+    if (mp3Decoder) {
+        mp3Decoder->stop();
+        delete mp3Decoder;
+        mp3Decoder = nullptr;
+    }
+    if (mp3Buff) {
+        mp3Buff->close();
+        delete mp3Buff;
+        mp3Buff = nullptr;
+    }
+    if (mp3Source) {
+        mp3Source->close();
+        delete mp3Source;
+        mp3Source = nullptr;
+    }
+    musicPlaying = false;
+}
+
+void musicPlay(int8_t index) {
+    musicStop();
+    if (!wifiConnected || mp3Count == 0) return;
+    if (index < 0 || index >= mp3Count) index = 0;
+    musicEnsureOutput();
+    mp3Out->SetGain(mp3Gain);
+    String url = String(SERVER_URL) + "/music/" + urlEncodeName(mp3Tracks[index]);
+    // The file endpoint requires the pairing token; the stream reader
+    // cannot set headers, so it travels as a query parameter instead.
+    if (apiToken.length() > 0) {
+        url += "?token=" + apiToken;
+    }
+    mp3Source = new AudioFileSourceHTTPStream();
+    if (!mp3Source->open(url.c_str())) {
+        Serial.printf("Cannot open stream: %s\n", mp3Tracks[index].c_str());
+        musicStop();
+        return;
+    }
+    mp3Buff = new AudioFileSourceBuffer(mp3Source, 8192);
+    mp3Decoder = new AudioGeneratorMP3();
+    if (mp3Decoder->begin(mp3Buff, mp3Out)) {
+        mp3Index = index;
+        musicPlaying = true;
+        Serial.printf("Playing: %s\n", mp3Tracks[index].c_str());
+    } else {
+        Serial.printf("Cannot play: %s\n", mp3Tracks[index].c_str());
+        musicStop();
+    }
+}
+
+void musicPump() {
+    if (musicPlaying && mp3Decoder) {
+        bool chunkOk = false;
+        if (mp3Decoder->isRunning()) {
+            chunkOk = mp3Decoder->loop();
+            if (!chunkOk) {
+                Serial.println("Track finished");
+                musicStop();
+            }
+        } else {
+            musicStop();
+        }
+        if (musicPageActive && !chunkOk) drawMusicPage();
+    }
+}
+
+void drawMusicPage() {
+    tft.fillScreen(deckBackgroundColor);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
+    tft.drawString("MUSIC", SCREEN_WIDTH / 2, 12, 2);
+    tft.drawFastHLine(10, 28, SCREEN_WIDTH - 20, TFT_DARKGREY);
+    if (!wifiConnected) {
+        tft.setTextColor(TFT_YELLOW, deckBackgroundColor);
+        tft.drawString("No WiFi", SCREEN_WIDTH / 2, 60, 2);
+    } else if (mp3Count == 0) {
+        tft.setTextColor(TFT_LIGHTGREY, deckBackgroundColor);
+        tft.drawString("Put .mp3 in music folder", SCREEN_WIDTH / 2, 60, 2);
+    } else {
+        uint8_t shown = mp3Count > 5 ? 5 : mp3Count;
+        uint8_t start = 0;
+        if (mp3Index >= 0 && mp3Index >= shown) {
+            start = mp3Index - shown + 1;
+            if (start + shown > mp3Count) start = mp3Count - shown;
+        }
+        for (uint8_t r = 0; r < shown; r++) {
+            uint8_t i = start + r;
+            int y = 44 + r * 24;
+            bool current = (i == mp3Index);
+            if (current) {
+                tft.fillRoundRect(8, y - 11, SCREEN_WIDTH - 16, 22, 4, tft.color565(30, 60, 30));
+            }
+            tft.setTextDatum(ML_DATUM);
+            tft.setTextColor(current ? TFT_GREEN : TFT_WHITE, current ? tft.color565(30, 60, 30) : deckBackgroundColor);
+            String label = mp3Tracks[i];
+            if (label.startsWith("/")) label = label.substring(1);
+            if (label.endsWith(".mp3") || label.endsWith(".MP3")) label = label.substring(0, label.length() - 4);
+            tft.drawString(truncateText(label, 24), 14, y, 2);
+        }
+    }
+    // Transport row: |< PLAY STOP >| VOL- BACK
+    const char* keys[6] = {"|<", "PLAY", "STOP", ">|", "VOL-", "BACK"};
+    const int xs[6] = {8, 59, 121, 183, 227, 271};
+    for (uint8_t b = 0; b < 6; b++) {
+        int w = (b == 1 || b == 2) ? 62 : 44;
+        int x = xs[b];
+        if (x + w > SCREEN_WIDTH - 8) w = SCREEN_WIDTH - 8 - x;
+        tft.fillRoundRect(x, 196, w, 36, 6, tft.color565(40, 40, 60));
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_WHITE, tft.color565(40, 40, 60));
+        tft.drawString(keys[b], x + w / 2, 214, 2);
+    }
+}
+
+void openMusicPage() {
+    musicPageActive = true;
+    musicOpenedAt = millis();
+    ignoreTouchUntil = millis() + 400;
+    musicScanSD();
+    drawMusicPage();
+    Serial.println("Music page opened");
+}
+
+void closeMusicPage() {
+    musicPageActive = false;
+    musicStop();
+    drawAllButtons();
+    drawStatusBar();
+    Serial.println("Music page closed");
+}
+
+void handleMusicTouch() {
+    if (!touchDown) return;
+    if (millis() < ignoreTouchUntil) return;
+    static unsigned long musicTouchDebounce = 0;
+    if (millis() < musicTouchDebounce) return;
+    TS_Point p = touchPoint;
+    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
+    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    musicTouchDebounce = millis() + 300;
+    ignoreTouchUntil = millis() + 400;
+    if (y >= 196) {
+        if (x < 59) {
+            if (mp3Count > 0) musicPlay((mp3Index <= 0) ? mp3Count - 1 : mp3Index - 1);
+        } else if (x < 121) {
+            if (musicPlaying) musicStop();
+            else if (mp3Index >= 0) musicPlay(mp3Index);
+            else musicPlay(0);
+        } else if (x < 183) {
+            musicStop();
+        } else if (x < 227) {
+            if (mp3Count > 0) musicPlay((mp3Index >= (int8_t)mp3Count - 1) ? 0 : mp3Index + 1);
+        } else if (x < 271) {
+            mp3Gain -= 0.1f;
+            if (mp3Gain < 0.1f) mp3Gain = 0.1f;
+            if (mp3Out) mp3Out->SetGain(mp3Gain);
+            preferences.begin("deck", false);
+            preferences.putFloat("mp3_gain", mp3Gain);
+            preferences.end();
+        } else {
+            closeMusicPage();
+            return;
+        }
+        drawMusicPage();
+        return;
+    }
+    uint8_t shown = mp3Count > 5 ? 5 : mp3Count;
+    uint8_t start = 0;
+    if (mp3Index >= 0 && mp3Index >= shown) {
+        start = mp3Index - shown + 1;
+        if (start + shown > mp3Count) start = mp3Count - shown;
+    }
+    for (uint8_t r = 0; r < shown; r++) {
+        int rowY = 44 + r * 24;
+        if (y >= rowY - 12 && y <= rowY + 12) {
+            musicPlay(start + r);
+            drawMusicPage();
+            return;
+        }
+    }
+}
+
+void handleCalTouch() {
+    if (!touchDown) return;
     if (millis() < ignoreTouchUntil) return;
     static unsigned long calTouchDebounce = 0;
     if (millis() < calTouchDebounce) return;
-    TS_Point p = touch.getPoint();
+    TS_Point p = touchPoint;
     uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
     calTouchDebounce = millis() + 300;
     ignoreTouchUntil = millis() + 400;
@@ -1775,8 +2536,8 @@ void drawPomoPage() {
 }
 
 void handlePomoPageTouch() {
-    if (!touch.tirqTouched() || !touch.touched()) return;
-    TS_Point p = touch.getPoint();
+    if (!touchDown) return;
+    TS_Point p = touchPoint;
     uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
     uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
 
@@ -2028,8 +2789,8 @@ void switchToHomeProfile(uint8_t slot) {
 }
 
 void handleHomeTouch() {
-    if (!touch.tirqTouched() || !touch.touched()) return;
-    TS_Point p = touch.getPoint();
+    if (!touchDown) return;
+    TS_Point p = touchPoint;
     uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
     uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
 

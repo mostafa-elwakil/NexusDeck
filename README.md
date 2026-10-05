@@ -116,7 +116,23 @@ pio device monitor --baud 115200
 ```
 
 Close the serial monitor before uploading. Libraries (`TFT_eSPI`, `ArduinoJson`,
-XPT2046 Touch, `WiFiManager`, …) are fetched automatically from `platformio.ini`.
+XPT2046 Touch, `WiFiManager`, `ESP8266Audio`, DHT, …) are fetched automatically
+from `platformio.ini`. The firmware uses the `huge_app` partition (3MB app,
+no OTA) to fit the MP3 decoder.
+
+## Onboard Hardware (Speaker, SD Card, Sensors)
+
+The CYD has more than a screen — all wired in `main.cpp` config defines:
+
+| Part | Wiring (defaults) | What you get |
+|---|---|---|
+| Speaker (JST) | GPIO **26** (verify with multimeter) | Button clicks, pomodoro/timer alarms, error buzz. MP3 uses the internal DAC (pins 25+26). If silent, move the wire / change `SPEAKER_PIN`. |
+| Micro SD | Built-in slot (SCK 18 / MISO 19 / MOSI 23 / **CS 5**) | `/profiles/*.json` auto-backup + offline boot (no WiFi → loads last profile, music/alarms keep working). `/mp3/*.mp3` music library. |
+| DHT22 | Data → GPIO **22** (+ 3V3, GND) | Real room temperature on the home page (replaces the API value) + humidity in Serial log. Absent sensor = silently skipped. |
+| PIR motion | OUT → GPIO **27** (+ 5V, GND) | Screen wakes on approach, sleeps after 90s idle (`PIR_IDLE_SEC`). Touch also wakes. |
+
+**MP3 player:** copy `.mp3` files to the `music` folder inside the state dir (`Documents\NexusDeck\music\`), add a button with action **Music (SD MP3)** → tap opens the player (list, prev/play/stop/next, volume, tap track to play). Tracks stream from the companion over WiFi (server must run); playback stops when the page closes.
+> Note: the onboard SD slot shares the touch SPI bus on this unit (first-init-wins) and cannot coexist with touch input, so SD support is disabled in firmware.
 
 The CYD display uses these hardware connections:
 
@@ -255,6 +271,19 @@ Optional keys: `home_lat` / `home_lon` (skip geocoding), `prayer_method` (0–15
 
 - **Top bar widgets**: toggle Date, Prayer, and Temp individually (remaining ones spread evenly).
 - **Screen brightness**: 10–100% slider ( applied instantly on the ESP32, backlight alerts still blink on top of it).
+
+## Spotify Setup (Control + Now Playing on ESP)
+
+Tap a **Spotify** button on the ESP32 to see the current track + transport
+(prev/play/next). One-time setup (needs Spotify Premium + Spotify open on
+phone/PC — the API drives your devices, sound comes from them):
+
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → create an app.
+2. App settings → add Redirect URI `http://localhost:8765/api/spotify/callback` (match your server port).
+3. In Studio open **⚙ System → Spotify**: paste Client ID + Client secret → **Save** → **Connect** → approve.
+4. Button actions: **Spotify Control** (Play/Pause/Next/Previous/Toggle/Now Playing).
+
+Tokens stay on this PC only. **Forget** disconnects anytime.
 
 ## Google Calendar Setup
 
