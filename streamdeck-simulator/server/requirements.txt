@@ -7,3 +7,4 @@ tzdata>=2024.1  # zoneinfo database for Windows (iCal timezones)
 Pillow>=10.0.0  # rendered profile pages (JPEG for ESP32)
 arabic-reshaper>=3.0.0  # Arabic labels on rendered pages
 python-bidi>=0.5.0  # RTL text on rendered pages
+cryptography>=42.0.0  # self-signed TLS cert for https://nexusdeck

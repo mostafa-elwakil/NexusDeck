@@ -65,8 +65,13 @@
                     });
 
                     // Initialize actions engine
+                    // Same-origin by default so Studio works under any host,
+                    // scheme or port (localhost:8765, https://nexusdeck, LAN IP).
+                    const sameOrigin = window.location.origin.startsWith('http')
+                        ? window.location.origin.replace(/\/$/, '')
+                        : 'http://localhost:8765';
                     this.actions = new ActionsEngine(this.deck, {
-                        serverUrl: 'http://localhost:8765'
+                        serverUrl: sameOrigin
                     });
 
                     // Initialize live keys manager

@@ -336,6 +336,15 @@ TJpg_Decoder. Touch mapping is unchanged (same grid geometry).
 - The device picks it up on the next home-info sync; any fetch failure
   falls back to native drawing automatically.
 
+## Pretty URL: https://nexusdeck (instead of http://localhost:8765)
+
+One-time setup (HTTPS stays alongside plain HTTP, which the ESP32 keeps using):
+
+1. **Name**: run `tools\setup-hostname.ps1` **as Administrator** (adds `127.0.0.1 nexusdeck` to hosts).
+2. **HTTPS**: `setx NEXUSDECK_HTTPS 1` (optional `NEXUSDECK_HTTPS_PORT`, default 443 — needs admin to bind; falls back to 8443), then restart the server. A self-signed cert is auto-created in the state folder.
+3. **Trust** (removes the browser warning): run `tools\trust-cert.ps1` **as Administrator**, restart the browser.
+4. Open `https://nexusdeck/` — Studio detects the origin automatically. OAuth redirect URIs (Google/Spotify dashboards) must use the new origin if you use them.
+
 ## Tests
 
 Regression tests guard the persistence fixes (settings must survive restarts):

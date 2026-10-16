@@ -25,7 +25,9 @@ import base64
 
 app = Flask(__name__)
 # CORS enabled with restrictions for security
-CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', '127.0.0.1'])
+CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', '127.0.0.1',
+                   'https://localhost:*', 'https://127.0.0.1:*',
+                   'https://nexusdeck', 'https://nexusdeck:*'])
 
 # Server configuration
 SERVER_VERSION = '2.4.3'
@@ -3512,6 +3514,105 @@ def _redirect_output_to_log():
         return False
 
 
+def _tls_cert_paths():
+    return (os.path.join(STATE_DIR, 'nexusdeck.crt'),
+            os.path.join(STATE_DIR, 'nexusdeck.key'))
+
+
+def _ensure_tls_cert():
+    """Self-signed cert for CN=nexusdeck (+localhost/LAN IPs). Returns (crt, key) or (None, None)."""
+    crt_path, key_path = _tls_cert_paths()
+    if os.path.exists(crt_path) and os.path.exists(key_path):
+        return crt_path, key_path
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except ImportError:
+        print('[TLS] cryptography package missing (pip install cryptography)')
+        return None, None
+    import socket as socket_module
+    from datetime import datetime, timedelta
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    names = [x509.DNSName('nexusdeck'), x509.DNSName('localhost'),
+             x509.IPAddress(__import__('ipaddress').IPv4Address('127.0.0.1'))]
+    try:
+        hostname = socket_module.gethostname()
+        for info in socket_module.getaddrinfo(hostname, None, socket_module.AF_INET):
+            try:
+                ip = info[4][0]
+                if not ip.startswith('127.'):
+                    names.append(x509.IPAddress(__import__('ipaddress').IPv4Address(ip)))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'nexusdeck')])
+    now = datetime.utcnow()
+    cert = (x509.CertificateBuilder()
+            .subject_name(subject).issuer_name(issuer)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(names), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .sign(key, hashes.SHA256()))
+    try:
+        with open(crt_path, 'wb') as handle:
+            handle.write(cert.public_bytes(serialization.Encoding.PEM))
+        with open(key_path, 'wb') as handle:
+            handle.write(key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption()))
+    except OSError as error:
+        print(f'[TLS] cannot write cert: {error}')
+        return None, None
+    print(f'[TLS] generated self-signed cert {crt_path}')
+    print('[TLS] first visit warns NET::ERR_CERT_AUTHORITY_INVALID: '
+          'Advanced > Proceed, or trust it (tools/trust-cert.ps1 as admin)')
+    return crt_path, key_path
+
+
+def _maybe_start_https():
+    """Start an HTTPS listener alongside plain HTTP (ESP32 keeps using HTTP).
+
+    Returns the HTTPS port or None. Enable with NEXUSDECK_HTTPS=1,
+    optional NEXUSDECK_HTTPS_PORT (default 443, falls back to 8443).
+    """
+    if (os.environ.get('NEXUSDECK_HTTPS', '') or '').strip().lower() not in ('1', 'true', 'yes', 'on'):
+        return None
+    crt_path, key_path = _ensure_tls_cert()
+    if not crt_path:
+        return None
+    try:
+        wanted = int(os.environ.get('NEXUSDECK_HTTPS_PORT', '443') or 443)
+    except ValueError:
+        wanted = 443
+    from werkzeug.serving import run_simple
+    for port in [wanted] + ([8443] if wanted != 8443 else []):
+        try:
+            thread = threading.Thread(
+                target=run_simple,
+                kwargs={'hostname': HOST, 'port': port, 'application': app,
+                        'ssl_context': (crt_path, key_path),
+                        'threaded': True, 'use_reloader': False},
+                daemon=True, name='nexusdeck-https')
+            thread.start()
+            import time as time_module
+            time_module.sleep(1.0)
+            if thread.is_alive():
+                print(f'[TLS] HTTPS on https://nexusdeck{"" if port == 443 else ":" + str(port)}/ '
+                      f'(HTTP stays on :{PORT} for the ESP32)')
+                return port
+        except OSError as error:
+            print(f'[TLS] port {port} unavailable ({error}); '
+                  + ('run as admin for :443' if port == 443 else 'trying next'))
+            continue
+    print('[TLS] no HTTPS port available')
+    return None
+
+
 if __name__ == '__main__':
     _redirect_output_to_log()
     if '--minimized' in sys.argv[1:]:
@@ -3546,9 +3647,16 @@ if __name__ == '__main__':
 
     _ensure_single_instance()
     _ensure_api_token()
+    https_port = _maybe_start_https()
     if getattr(sys, 'frozen', False) and '--minimized' not in sys.argv:
         import webbrowser
-        threading.Timer(2.0, lambda: webbrowser.open(f'http://localhost:{PORT}/')).start()
+        if https_port == 443:
+            browser_url = 'https://nexusdeck/'
+        elif https_port:
+            browser_url = f'https://nexusdeck:{https_port}/'
+        else:
+            browser_url = f'http://localhost:{PORT}/'
+        threading.Timer(2.0, lambda: webbrowser.open(browser_url)).start()
     print(f'[STATE] dir={STATE_DIR}')
     for info in _state_files_info():
         print(f"[STATE] {info['name']} size={info['size']} "
