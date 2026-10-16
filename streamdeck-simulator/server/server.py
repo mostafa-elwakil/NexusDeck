@@ -1289,6 +1289,38 @@ def music_file(filename):
     return jsonify({'success': False, 'error': 'Track not found'}), 404
 
 
+_page_cache = {'key': None, 'jpeg': None}
+
+
+@app.route('/api/page-image', methods=['GET'])
+@rate_limit
+@_require_api_token
+def page_image():
+    """Rendered 320x240 JPEG of a profile for the ESP32 (rich graphics)."""
+    from flask import Response
+    name = (request.args.get('name') or '').strip()
+    target = None
+    if name:
+        for candidate in _list_all_profiles():
+            if candidate.get('name') == name:
+                target = candidate
+                break
+        if target is None:
+            return jsonify({'success': False, 'error': 'Profile not found'}), 404
+    else:
+        target = current_profile
+    try:
+        import page_render
+        key = f"{target.get('name')}:{len(json.dumps(target, ensure_ascii=False))}"
+        if _page_cache['key'] != key:
+            _page_cache['jpeg'] = page_render.render_profile_page(target)
+            _page_cache['key'] = key
+        return Response(_page_cache['jpeg'], mimetype='image/jpeg')
+    except Exception as error:
+        log_request('ERROR', f'page render: {error}')
+        return jsonify({'success': False, 'error': 'Render failed'}), 500
+
+
 @app.route('/api/installed-apps', methods=['GET'])
 @rate_limit
 @_require_api_token
@@ -2601,7 +2633,8 @@ def handle_settings():
                    'prayer_method', 'clock_analog', 'show_temp',
                    'show_prayer', 'show_date', 'brightness', 'home_slots',
                    'google_client_id', 'google_client_secret',
-                   'gcal_ical_url', 'spotify_client_id', 'spotify_client_secret'}
+                   'gcal_ical_url', 'spotify_client_id', 'spotify_client_secret',
+                   'render_pages'}
         for key, value in data.items():
             if key == 'home_slots' and isinstance(value, list):
                 cleaned = [str(item).strip() for item in value[:4]
@@ -2943,6 +2976,7 @@ def home_info():
         'show_temp': bool(server_settings.get('show_temp', True)),
         'show_prayer': bool(server_settings.get('show_prayer', True)),
         'show_date': bool(server_settings.get('show_date', True)),
+        'render_pages': bool(server_settings.get('render_pages', False)),
         'brightness': brightness
     })
 

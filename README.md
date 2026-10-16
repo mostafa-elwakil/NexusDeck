@@ -317,6 +317,25 @@ Every `/api/*` endpoint (except health check) requires auth:
   other LAN clients, not passive eavesdroppers). Secrets live in
   `%APPDATA%\NexusDeck\server_settings.json` (user-private folder).
 
+## Two Editions: Classic Board + S3 Board
+
+- **Classic (this firmware, CYD ESP32)**: everything works through the
+  companion over WiFi. No USB-HID: the classic ESP32 + CH340 has no native
+  USB, so PC actions always go through the server.
+- **S3 edition (planned)**: ESP32-S3 boards (e.g. Guition JC3248W535) with
+  native USB → real USB-HID keyboard/mouse like OpenDeck, working with no
+  app running.
+
+## Rendered Pages (OpenDeck-style rich graphics)
+
+Instead of primitives, the server can render each profile to a 320x240 JPEG
+(Pillow, Arabic-shaped labels, icon glyphs) that the ESP32 displays with
+TJpg_Decoder. Touch mapping is unchanged (same grid geometry).
+
+- Studio → Profiles → enable **Rich rendered pages**, Save home settings.
+- The device picks it up on the next home-info sync; any fetch failure
+  falls back to native drawing automatically.
+
 ## Tests
 
 Regression tests guard the persistence fixes (settings must survive restarts):

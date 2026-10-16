@@ -347,6 +347,9 @@ class StudioUI {
                         </div>
                     </div>
                     <p class="text-muted" style="font-size: 12px; color: #888;">Applies to the whole screen on the next sync.</p>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="profile-render-pages"> Rich rendered pages (server draws JPEG like OpenDeck)</label>
+                    </div>
                 </div>
                 <div class="preset-section" id="home-page-section">
                     <p class="panel-kicker">ESP32 home page</p>
@@ -2652,6 +2655,8 @@ class StudioUI {
                 if (brightnessVal) brightnessVal.textContent = brightness.value;
             }
             await this.loadHomeSlots(settings.home_slots || []);
+            const renderPages = document.getElementById('profile-render-pages');
+            if (renderPages) renderPages.checked = !!settings.render_pages;
         } catch (error) {
             console.warn('Failed to load home settings', error);
         }
@@ -2724,6 +2729,7 @@ class StudioUI {
             home_lon: val('home-lon'),
             prayer_method: parseInt(document.getElementById('home-prayer-method')?.value, 10) || 5,
             brightness: parseInt(document.getElementById('home-brightness')?.value, 10) || 100,
+            render_pages: document.getElementById('profile-render-pages')?.checked === true,
             home_slots: [0, 1, 2, 3].map((i) => document.getElementById(`home-slot-${i}`)?.value || '')
         };
         try {
