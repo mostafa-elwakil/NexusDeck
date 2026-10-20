@@ -1,4 +1,5 @@
-; NexusDeck - Windows installer (per-user, no admin required)
+; NexusDeck - Windows installer (needs admin: maps https://nexusdeck in hosts
+; and trusts its certificate during setup)
 ; Build from repo root:
 ;   iscc /DMyAppVersion="1.0.0" /DStagingDir="staging" /O"installer-out" tools\installer\windows\setup.iss
 #ifndef MyAppVersion
@@ -17,7 +18,7 @@ AppPublisher=Mostafa Elwakil
 AppCopyright=Copyright (C) 2026 Mostafa Elwakil
 DefaultDirName={localappdata}\Programs\NexusDeck
 DefaultGroupName=NexusDeck
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 OutputDir=.
 OutputBaseFilename=NexusDeck-Setup-{#MyAppVersion}-windows-x64
 Compression=lzma2/max
@@ -45,4 +46,7 @@ Name: "{autodesktop}\NexusDeck"; Filename: "{app}\Run-NexusDeck.bat"; IconFilena
 Name: "{userstartup}\NexusDeck"; Filename: "{app}\NexusDeckCompanion.exe"; Parameters: "--minimized"; Tasks: startup
 
 [Run]
+; Map the name + trust the cert so https://nexusdeck/ works right after
+; install (installer runs elevated, so no extra UAC prompts).
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""& '{app}\setup-hostname.ps1'; & '{app}\setup-https.ps1'"""; Flags: runhidden
 Filename: "{app}\Run-NexusDeck.bat"; Description: "Launch NexusDeck now"; Flags: postinstall shellexec skipifsilent

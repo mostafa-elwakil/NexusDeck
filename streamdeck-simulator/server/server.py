@@ -1905,6 +1905,29 @@ def _record_esp32_sync(profile):
     esp32_device_state['button_count'] = len(profile.get('buttons') or [])
 
 
+def _best_local_ip_for(peer: str) -> str:
+    """IP of the NIC that can actually reach the ESP32.
+
+    socket.gethostbyname(hostname) is unreliable on multi-homed Windows
+    (VPN/WSL/Docker adapters) and can report an IP the ESP32 cannot reach,
+    which made the firmware save/restart in a loop (looks like a screen
+    freeze). Connect a UDP socket to the client and read the local address.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.settimeout(1.0)
+            s.connect((peer, 9))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return ''
+
+
 @app.route('/api/get-profile', methods=['GET'])
 @_require_api_token
 def get_profile():
@@ -1919,9 +1942,8 @@ def get_profile():
             server_settings['esp32_ip'] = esp32_ip
             _persist_server_settings(server_settings)
 
-    # جلب الـ IP الخاص بالجهاز
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
+    # جلب الـ IP الخاص بالجهاز (نفس شبكة الـ ESP32 إن أمكن)
+    local_ip = _best_local_ip_for(request.remote_addr)
 
     response = jsonify(current_profile)
     # إضافة الـ IP في الـ Header أو إرساله كجزء من البروفايل
@@ -3574,13 +3596,20 @@ def _ensure_tls_cert():
     return crt_path, key_path
 
 
+def _default_https_enabled():
+    """https://nexusdeck/ is the primary UI now; disable with NEXUSDECK_HTTPS=0."""
+    raw = (os.environ.get('NEXUSDECK_HTTPS', '') or '').strip().lower()
+    return raw not in ('0', 'false', 'no', 'off')
+
+
 def _maybe_start_https():
     """Start an HTTPS listener alongside plain HTTP (ESP32 keeps using HTTP).
 
-    Returns the HTTPS port or None. Enable with NEXUSDECK_HTTPS=1,
-    optional NEXUSDECK_HTTPS_PORT (default 443, falls back to 8443).
+    Returns the HTTPS port or None. ON by default (https://nexusdeck/),
+    disable with NEXUSDECK_HTTPS=0; optional NEXUSDECK_HTTPS_PORT
+    (default 443, falls back to 8443).
     """
-    if (os.environ.get('NEXUSDECK_HTTPS', '') or '').strip().lower() not in ('1', 'true', 'yes', 'on'):
+    if not _default_https_enabled():
         return None
     crt_path, key_path = _ensure_tls_cert()
     if not crt_path:

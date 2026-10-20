@@ -144,7 +144,37 @@ class StudioUI {
         this.createStudioUI();
         this.applyTheme(this.theme);
         this.attachEventListeners();
+        this.refreshProfileSwitcher();
         this.updateServerStatus(this.actions.serverAvailable);
+    }
+
+    // Fill the view-mode profile dropdown from the server (home slots first,
+    // falling back to every stored profile). Hidden entirely while offline
+    // or when fewer than two profiles exist.
+    async refreshProfileSwitcher() {
+        const select = document.getElementById('view-profile-select');
+        if (!select || !this.actions.serverUrl) return;
+        const escape = (s) => String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/profiles`);
+            if (!response.ok) return;
+            const data = await response.json();
+            let names = (data.slots || []).map((n) => String(n)).filter(Boolean);
+            if (names.length < 2) {
+                names = (data.profiles || []).map((n) => String(n)).filter(Boolean);
+            }
+            if (names.length < 2) return;
+            const current = String(data.current || '');
+            if (names.length && !names.includes(current)) names = [current, ...names];
+            select.innerHTML = names
+                .map((name) => `<option value="${escape(name)}"${name === current ? ' selected' : ''}>${escape(name)}</option>`)
+                .join('');
+            select.style.display = '';
+        } catch (error) {
+            console.warn('Profile switcher unavailable:', error);
+        }
     }
 
     createStudioUI() {
@@ -198,6 +228,7 @@ class StudioUI {
                     <span class="icon">✕</span>
                     <span class="label">Clear</span>
                 </button>
+                <select id="view-profile-select" class="toolbar-btn" title="Switch active profile without opening Studio" style="display: none;"></select>
                 <button id="btn-toggle-history" class="toolbar-btn" title="Show/hide activity">
                     <span class="icon">≡</span>
                     <span class="label">Activity</span>
@@ -903,6 +934,29 @@ class StudioUI {
     }
 
     attachEventListeners() {
+        // Quick profile switcher (view mode): switches the shared server
+        // profile exactly like the ESP32 home-page slot buttons do, then
+        // reloads so the deck picks up the newly active profile.
+        document.getElementById('view-profile-select')?.addEventListener('change', async (event) => {
+            const name = event.target.value;
+            if (!name || !this.actions.serverUrl) return;
+            try {
+                const response = await fetch(`${this.actions.serverUrl}/api/execute-action`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        actionType: 'switch_profile',
+                        actionData: JSON.stringify({ name })
+                    })
+                });
+                if (!response.ok) throw new Error(`switch failed (${response.status})`);
+                location.reload();
+            } catch (error) {
+                console.warn('Profile switch failed:', error);
+                this.showNotification('Switch failed', String(error.message || error));
+            }
+        });
+
         // Toggle mode
         document.getElementById('btn-toggle-mode')?.addEventListener('click', () => {
             this.toggleMode();

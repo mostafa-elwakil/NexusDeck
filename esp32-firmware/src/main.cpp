@@ -21,7 +21,6 @@
 #include <Preferences.h>
 #include <WiFiManager.h>
 #include <qrcode.h>
-#include <TJpg_Decoder.h>
 #include <DHT.h>
 #include <AudioFileSourceHTTPStream.h>
 #include <AudioFileSourceBuffer.h>
@@ -285,7 +284,6 @@ void drawButton(uint8_t index);
 void drawDeckBackground();
 void drawAllButtons();
 void showGridOrPage();
-bool fetchRenderedPage();
 void handleTouch();
 void touchSelfTest();
 extern TS_Point touchPoint;
@@ -450,7 +448,6 @@ void setup() {
     Serial.println("Setup complete!");
 }
 
-// ===== Main Loop =====
 void loop() {
     // Backlight phase-end alert blinking (non-blocking)
     updateBacklight();
@@ -980,38 +977,7 @@ void drawAllButtons() {
     }
 }
 
-bool tftJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-    if (y >= SCREEN_HEIGHT) return 0;
-    tft.pushImage(x, y, w, h, bitmap);
-    return 1;
-}
-
-// Rendered-pages mode (OpenDeck-style rich graphics): the server renders
-// the whole 320x240 page as JPEG; the ESP32 just displays it. Touch mapping
-// is unchanged because the server mirrors the grid geometry exactly.
-bool renderPages = false;
-
-bool fetchRenderedPage() {
-    if (!wifiConnected) return false;
-    HTTPClient h;
-    h.setTimeout(15000);
-    espHttpBegin(h, String(SERVER_URL) + "/api/page-image");
-    if (h.GET() != 200) {
-        h.end();
-        return false;
-    }
-    String payload = h.getString();
-    h.end();
-    if (payload.length() < 100) return false;
-    TJpgDec.setJpgScale(1);
-    TJpgDec.setCallback(tftJpgOutput);
-    return TJpgDec.drawJpg(0, 0, (const uint8_t*)payload.c_str(), payload.length()) == JDR_OK;
-}
-
 void showGridOrPage() {
-    if (renderPages && !anyOverlayActive()) {
-        if (fetchRenderedPage()) return;
-    }
     drawAllButtons();
 }
 
@@ -2678,7 +2644,6 @@ void fetchHomeInfo(bool force) {
         homePrayerTime = "--:--";
     }
     clockAnalog = doc["clock_analog"] | true;
-    renderPages = doc["render_pages"] | false;
     showTemp = doc["show_temp"] | true;
     showPrayer = doc["show_prayer"] | true;
     showDate = doc["show_date"] | true;
