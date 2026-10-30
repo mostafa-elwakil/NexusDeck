@@ -245,6 +245,13 @@ int16_t gestureStartX = -1, gestureStartY = -1;
 bool gestureFired = false;
 // Ignore touches briefly after opening a page (finger may still be down)
 unsigned long ignoreTouchUntil = 0;
+// Fast back: right-edge swipe works on EVERY page (and the grid).
+// swipeStartX == -1 means finger up; swipeDone stops repeat firing until release
+int16_t swipeStartX = -1, swipeStartY = 0;
+bool swipeDone = false;
+bool homeFetchPending = false; // fetch home data AFTER drawing (fast back)
+// Mapped touch coords for the current frame (shared by gesture + handlers)
+uint16_t touchX = 0, touchY = 0;
 int pomoPageLastSecond = -1;
 bool pomoPageDirty = true;
 // Backlight alert state (phase-end notification)
@@ -254,6 +261,7 @@ unsigned long backlightLastToggle = 0;
 bool backlightLevel = true;
 // Home page state
 bool homePageActive = false;
+unsigned long homeOpenedAt = 0; // when home was (re)opened; gates deferred fetch
 String homeNames[4] = {"", "", "", ""};
 String homeTime = "--:--";
 String homeDate = "--";
@@ -336,6 +344,7 @@ bool sdLoadLastProfile();
 void musicScanSD();
 void openMusicPage();
 void closeMusicPage();
+void musicStop();
 void drawMusicPage();
 void handleMusicTouch();
 void musicPump();
@@ -463,6 +472,62 @@ void loop() {
         touchDown = false;
     }
 
+    // Map touch coords once per frame (shared by gesture + handlers)
+    touchX = constrain(map(touchPoint.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
+    touchY = constrain(map(touchPoint.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+
+    // New touch starts / ends: reset swipe-back state on release
+    if (touchDown) {
+        if (swipeStartX < 0) {
+            swipeStartX = touchX;
+            swipeStartY = touchY;
+        }
+    } else {
+        swipeStartX = -1;
+        swipeDone = false;
+    }
+
+    // Fast universal back — a horizontal edge swipe (RIGHT->LEFT or LEFT->RIGHT)
+    // lands on the home page from anywhere (any page or the grid; home -> grid).
+    // Strict gating so ordinary TAPS (esp. right-edge profile buttons) are
+    // never stolen: the drag must travel far and stay nearly horizontal.
+    if (touchDown && !swipeDone) {
+        bool onGrid = !anyOverlayActive();
+        bool onHome = homePageActive;
+        // Home has profile buttons at x 248..312 -> only the last few px count
+        int16_t edgeX = onHome ? 300 : (onGrid ? 250 : 285);
+        int16_t moveNeed = (onGrid || onHome) ? 60 : 40;
+        int16_t dxR = swipeStartX - (int16_t)touchX;      // right->left drag
+        int16_t dxL = (int16_t)touchX - swipeStartX;      // left->right drag
+        int16_t dx = (dxR > dxL) ? dxR : dxL;
+        int16_t dy = abs((int)touchY - swipeStartY);
+        bool nearEdge = swipeStartX > edgeX ||
+                        swipeStartX < (int16_t)SCREEN_WIDTH - edgeX;
+        if (nearEdge && dx > moveNeed && dy < 35 && dx > dy * 2) {
+            swipeDone = true;
+            pendingButton = -1;
+            pomoPressCandidate = -1;
+            gestureFired = true;
+            touchDebounceUntil = millis() + 600;
+            ignoreTouchUntil = millis() + 600;
+            if (homePageActive) {
+                closeHomeToGrid(); // home -> grid
+            } else {
+                // Close any open page silently (no intermediate grid draw),
+                // then draw home in one shot
+                if (musicPageActive) musicStop();
+                calPageActive = false;
+                calDetail = -1;
+                musicPageActive = false;
+                spotPageActive = false;
+                pomoPageActive = false;
+                pomoPageIndex = -1;
+                openHomePage();
+            }
+            Serial.println("Swipe -> home");
+        }
+    }
+
     // Hold top area/status bar for 2.5s to trigger NexusDeck-Setup portal anytime.
     // The timer MUST reset on release, otherwise any later short tap opens the portal.
     static unsigned long portalHoldStart = 0;
@@ -501,8 +566,11 @@ void loop() {
     processButtonResets();
     updateRunningIndicators();
 
-    // Handle touch input (pages or grid)
-    if (pomoPageActive) {
+    // Handle touch input (pages or grid). Skip all handlers while a
+    // swipe-back just fired so they cannot act on that touch's tail.
+    if (swipeDone) {
+        // swipe-back consumed this touch: no handler action until release
+    } else if (pomoPageActive) {
         handlePomoPageTouch();
     } else if (homePageActive) {
         handleHomeTouch();
@@ -562,6 +630,16 @@ void loop() {
 
     // Refresh home page clock once per minute / on state change + data refresh
     if (homePageActive) {
+        // Deferred data fetch: wait 700ms after opening so the user's first
+        // taps (profile buttons) are processed BEFORE the loop blocks on HTTP.
+        static unsigned long homeFetchAt = 0;
+        if (homeFetchPending && millis() - homeOpenedAt > 700) {
+            homeFetchPending = false;
+            homeFetchAt = millis();
+            fetchProfileNames(); // throttled internally (10s)
+            bool stale = millis() - lastHomeInfoFetch > 15000;
+            fetchHomeInfo(stale); // force only when older than 15s
+        }
         if (millis() - lastHomeInfoFetch > 60000) {
             fetchHomeInfo(false);
             fetchProfileNames();
@@ -1902,7 +1980,7 @@ void openPomoPage(uint8_t index) {
     pomoPageActive = true;
     pomoPageLastSecond = -1;
     pomoPageDirty = true;
-    ignoreTouchUntil = millis() + 400;
+    ignoreTouchUntil = millis() + 250;
     Serial.printf("Pomodoro page opened for button %d\n", index);
     drawPomoPage();
 }
@@ -2015,7 +2093,7 @@ void openCalendarPage() {
     calCount = 0;
     calError = "";
     calDetail = -1;
-    ignoreTouchUntil = millis() + 400;
+    ignoreTouchUntil = millis() + 250;
     if (!wifiConnected) {
         calError = "No WiFi";
         drawCalendarPage();
@@ -2169,7 +2247,7 @@ void openSpotifyPage() {
     spotPageActive = true;
     spotOpenedAt = millis();
     spotLastRefresh = 0;
-    ignoreTouchUntil = millis() + 400;
+    ignoreTouchUntil = millis() + 250;
     tft.fillScreen(deckBackgroundColor);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, deckBackgroundColor);
@@ -2194,8 +2272,8 @@ void handleSpotTouch() {
     TS_Point p = touch.getPoint();
     uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
     uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
-    spotTouchDebounce = millis() + 300;
-    ignoreTouchUntil = millis() + 400;
+    spotTouchDebounce = millis() + 150;
+    ignoreTouchUntil = millis() + 250;
     if (y >= 150 && y <= 194) {
         String op = "";
         if (x < 72) op = "previous";
@@ -2382,7 +2460,7 @@ void drawMusicPage() {
 void openMusicPage() {
     musicPageActive = true;
     musicOpenedAt = millis();
-    ignoreTouchUntil = millis() + 400;
+    ignoreTouchUntil = millis() + 250;
     musicScanSD();
     drawMusicPage();
     Serial.println("Music page opened");
@@ -2404,8 +2482,8 @@ void handleMusicTouch() {
     TS_Point p = touchPoint;
     uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
     uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
-    musicTouchDebounce = millis() + 300;
-    ignoreTouchUntil = millis() + 400;
+    musicTouchDebounce = millis() + 150;
+    ignoreTouchUntil = millis() + 250;
     if (y >= 196) {
         if (x < 59) {
             if (mp3Count > 0) musicPlay((mp3Index <= 0) ? mp3Count - 1 : mp3Index - 1);
@@ -2454,8 +2532,8 @@ void handleCalTouch() {
     if (millis() < calTouchDebounce) return;
     TS_Point p = touchPoint;
     uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
-    calTouchDebounce = millis() + 300;
-    ignoreTouchUntil = millis() + 400;
+    calTouchDebounce = millis() + 150;
+    ignoreTouchUntil = millis() + 250;
     if (calDetail >= 0) {
         calDetail = -1; // detail -> back to list
         drawCalendarPage();
@@ -2553,7 +2631,7 @@ void handlePomoPageTouch() {
     static unsigned long pomoTouchDebounce = 0;
     if (millis() < pomoTouchDebounce) return;
     if (millis() < ignoreTouchUntil) return;
-    pomoTouchDebounce = millis() + 300;
+    pomoTouchDebounce = millis() + 150;
 
     if (y < 180 || pomoPageIndex < 0) return;
     if (x < 106) {
@@ -2580,8 +2658,12 @@ String homeClockHM() {
 
 void fetchProfileNames() {
     if (!wifiConnected) return;
+    // Throttle: re-entering home rapidly must not stall the loop with HTTP
+    static unsigned long lastNamesFetch = 0;
+    if (lastNamesFetch != 0 && millis() - lastNamesFetch < 10000) return;
+    lastNamesFetch = millis();
     HTTPClient h;
-    h.setTimeout(5000);
+    h.setTimeout(2500);
     espHttpBegin(h, String(SERVER_URL) + "/api/profiles");
     if (h.GET() == 200) {
         DynamicJsonDocument doc(2048);
@@ -2599,6 +2681,7 @@ void fetchProfileNames() {
                 }
             }
             Serial.println("Profile names synced for home page");
+            homePageDirty = true; // redraw so fresh names appear
         }
     }
     h.end();
@@ -2609,7 +2692,7 @@ void fetchHomeInfo(bool force) {
     if (!force && millis() - lastHomeInfoFetch < 60000) return;
     lastHomeInfoFetch = millis();
     HTTPClient h;
-    h.setTimeout(8000);
+    h.setTimeout(3000);
     espHttpBegin(h, String(SERVER_URL) + "/api/home-info");
     if (h.GET() != 200) {
         h.end();
@@ -2660,11 +2743,13 @@ void fetchHomeInfo(bool force) {
 
 void openHomePage() {
     homePageActive = true;
+    homeOpenedAt = millis();
     homePageDirty = true;
     homeLastClock = "";
-    ignoreTouchUntil = millis() + 400;
-    fetchProfileNames();
-    fetchHomeInfo(true);
+    ignoreTouchUntil = millis() + 250;
+    // Fast open: draw immediately with cached data, fetch in loop afterwards
+    // (fetchProfileNames/fetchHomeInfo used to block here for up to 5+8s)
+    homeFetchPending = true;
     drawHomePage();
     Serial.println("Home page opened");
 }
@@ -2806,7 +2891,7 @@ void handleHomeTouch() {
     static unsigned long homeTouchDebounce = 0;
     if (millis() < homeTouchDebounce) return;
     if (millis() < ignoreTouchUntil) return;
-    homeTouchDebounce = millis() + 300;
+    homeTouchDebounce = millis() + 150;
 
     if (y < GRID_Y_OFFSET) return; // status bar reserved
     if (y < 40) return;            // info strip not touchable
