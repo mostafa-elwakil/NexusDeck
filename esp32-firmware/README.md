@@ -328,6 +328,8 @@ Additional:
 - LED: GPIO 4
 - Boot Button: GPIO 0
 - RGB LED: GPIO 17 (R), 4 (G), 16 (B)
+- WS2812B Matrix: GPIO 22 (data = CN1 connector pin 3; DHT22 disabled to free it — set `ENABLE_DHT 1` to swap back; alternatives: 4, 16, 17 RGB LED pads via `WS2812_LED_PIN`),
+  see `src/ledmatrix.h` and the main README "WS2812B LED Matrix" section)
 ```
 
 ---

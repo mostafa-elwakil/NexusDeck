@@ -48,5 +48,8 @@ Name: "{userstartup}\NexusDeck"; Filename: "{app}\NexusDeckCompanion.exe"; Param
 [Run]
 ; Map the name + trust the cert so https://nexusdeck/ works right after
 ; install (installer runs elevated, so no extra UAC prompts).
+; 1) generate the cert now (the exe has a dedicated --ensure-cert hook)
+; 2) add the hosts entry, 3) trust the cert in the machine root store.
+Filename: "{app}\NexusDeckCompanion.exe"; Parameters: "--ensure-cert"; Flags: runhidden waituntilterminated
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""& '{app}\setup-hostname.ps1'; & '{app}\setup-https.ps1'"""; Flags: runhidden
 Filename: "{app}\Run-NexusDeck.bat"; Description: "Launch NexusDeck now"; Flags: postinstall shellexec skipifsilent

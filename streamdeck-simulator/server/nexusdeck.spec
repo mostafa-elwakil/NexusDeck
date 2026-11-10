@@ -25,7 +25,9 @@ a = Analysis(
         (os.path.join(SIMULATOR_DIR, 'presets'), 'presets'),
     ],
     hiddenimports=[
-        'flask',
+        'cryptography',
+    'cryptography.x509',
+    'flask',
         'flask_cors',
         'psutil',
         'requests',

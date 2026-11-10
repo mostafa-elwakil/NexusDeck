@@ -143,6 +143,7 @@ class StudioUI {
     init() {
         this.createStudioUI();
         this.applyTheme(this.theme);
+        this.attachLightPanel();
         this.attachEventListeners();
         this.refreshProfileSwitcher();
         this.updateServerStatus(this.actions.serverAvailable);
@@ -200,6 +201,7 @@ class StudioUI {
         studioContainer.appendChild(this.createHistoryPanel());
         document.body.appendChild(studioContainer);
         document.body.appendChild(this.createSystemPanel());
+        document.body.appendChild(this.createLightPanel());
     }
 
     createToolbar() {
@@ -237,6 +239,10 @@ class StudioUI {
                 <button id="btn-toggle-theme" class="toolbar-btn" title="Switch to light mode" aria-label="Switch to light mode">
                     <span class="icon">☀</span>
                     <span class="label">Day</span>
+                </button>
+                <button id="btn-toggle-light" class="toolbar-btn" title="ESP32 LED light panel (whole-strip control)" aria-label="LED light panel">
+                    <span class="icon">💡</span>
+                    <span class="label">Light</span>
                 </button>
                 <button id="btn-system" class="toolbar-btn" title="Background & system settings" aria-label="System settings">
                     <span class="icon">⚙</span>
@@ -332,6 +338,7 @@ class StudioUI {
                             <option value="calendar">Calendar (Google)</option>
                             <option value="spotify">Spotify Control</option>
                             <option value="music">Music (SD MP3)</option>
+                            <option value="ws2812">WS2812 LED Matrix</option>
                             <option value="macro">Macro (multi-step)</option>
                             <option value="widget">Live Widget</option>
                         </select>
@@ -536,6 +543,199 @@ class StudioUI {
             </div>
         `;
         return panel;
+    }
+
+    // ESP32 WS2812 whole-strip control: pushes the master state to the
+    // server; the device applies it on the next cycles when the revision
+    // changes (see ledmatrix.h ledServerRev). Power off wins over effects.
+    createLightPanel() {
+        const panel = document.createElement('div');
+        panel.id = 'light-panel';
+        panel.className = 'light-panel';
+        panel.innerHTML = `
+            <div class="history-header">
+                <div>
+                    <p class="panel-kicker">ESP32 <span style="white-space: nowrap;">WS2812B</span> strip</p>
+                    <h3>LED Light</h3>
+                </div>
+                <button id="btn-close-light" class="close-btn" title="Hide panel">×</button>
+            </div>
+            <div style="padding: 4px 16px 16px;">
+                <div class="system-row">
+                    <div>
+                        <div class="system-label">Power</div>
+                        <div class="system-hint">All 64 LEDs on/off at once</div>
+                    </div>
+                    <label class="switch" title="Toggle the whole strip">
+                        <input type="checkbox" id="light-power" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="system-row" style="display: block;">
+                    <div class="system-label">Effect</div>
+                    <select id="light-effect" class="form-control" style="margin-top: 6px;">
+                        <option value="solid">Solid color</option>
+                        <option value="rainbow">Rainbow</option>
+                        <option value="breathe">Breathe</option>
+                        <option value="chase">Chase</option>
+                        <option value="twinkle">Twinkle (sparkles)</option>
+                        <option value="confetti">Confetti</option>
+                        <option value="comet">Comet</option>
+                        <option value="marquee">Marquee banner</option>
+                        <option value="fire">Fire</option>
+                        <option value="gradient">Flowing gradient</option>
+                        <option value="test">Test (walk pixels)</option>
+                        <option value="pixel">Single pixel</option>
+                        <option value="off">All off</option>
+                    </select>
+                </div>
+                <div class="system-row" style="display: block;">
+                    <div class="system-label">Color</div>
+                    <div class="color-picker-group" style="margin-top: 6px;">
+                        <input type="color" id="light-color" class="color-input" value="#008080">
+                        <input type="text" id="light-color-text" class="form-control color-text" value="#008080">
+                    </div>
+                </div>
+                <div class="system-row" style="display: block;">
+                    <div class="system-label">Brightness (<span id="light-brightness-val">40</span>)</div>
+                    <input type="range" id="light-brightness" class="form-control" min="0" max="80" value="40" style="margin-top: 6px; width: 100%;">
+                </div>
+                <div class="system-row" id="light-index-row" style="display: none;">
+                    <div>
+                        <div class="system-label">Pixel index</div>
+                        <div class="system-hint">0–63, wiring order</div>
+                    </div>
+                    <input type="number" id="light-index" class="form-control" min="0" max="63" value="0" style="width: 70px; flex: none;">
+                </div>
+                <div class="system-status" id="light-status-line"></div>
+                <div class="system-hint" style="margin-top: 6px;">Applies to the device within ~3 s (next sync). Buttons with the WS2812 preset action still work — the panel sets the standing state.</div>
+            </div>
+        `;
+        return panel;
+    }
+
+    attachLightPanel() {
+        const panel = document.getElementById('light-panel');
+        if (!panel) return;
+        document.getElementById('btn-toggle-light')?.addEventListener('click', () => {
+            const open = document.body.classList.toggle('light-open');
+            document.getElementById('btn-toggle-light')?.classList.toggle('active', open);
+            if (open) this.loadLightState();
+        });
+        document.getElementById('btn-close-light')?.addEventListener('click', () => {
+            document.body.classList.remove('light-open');
+            document.getElementById('btn-toggle-light')?.classList.remove('active');
+        });
+
+        const send = (updates) => this.sendLightState({
+            power: document.getElementById('light-power')?.checked ?? true,
+            mode: document.getElementById('light-effect')?.value || 'solid',
+            color: document.getElementById('light-color')?.value || '#008080',
+            brightness: parseInt(document.getElementById('light-brightness')?.value, 10) || 0,
+            index: parseInt(document.getElementById('light-index')?.value, 10) || 0,
+            ...updates
+        });
+        this.lightPanelState = { power: true, mode: 'solid', color: '#008080', brightness: 40, index: 0 };
+
+        document.getElementById('light-power')?.addEventListener('change', () => {
+            this.applyLightIndexVisibility();
+            this.lightPanelState.power = document.getElementById('light-power')?.checked ?? true;
+            send(this.lightPanelState);
+        });
+        document.getElementById('light-effect')?.addEventListener('change', () => {
+            this.applyLightIndexVisibility();
+            this.lightPanelState.mode = document.getElementById('light-effect')?.value || 'solid';
+            send(this.lightPanelState);
+        });
+        document.getElementById('light-color')?.addEventListener('change', () => {
+            this.lightPanelState.color = document.getElementById('light-color')?.value || '#008080';
+            send(this.lightPanelState);
+        });
+        const brightness = document.getElementById('light-brightness');
+        let lighterTimer = 0;
+        brightness?.addEventListener('input', () => {
+            document.getElementById('light-brightness-val').textContent = brightness.value;
+            clearTimeout(lighterTimer);
+            lighterTimer = setTimeout(() => {
+                this.lightPanelState.brightness = parseInt(brightness.value, 10) || 0;
+                send(this.lightPanelState);
+            }, 300);
+        });
+        document.getElementById('light-index')?.addEventListener('change', () => {
+            this.lightPanelState.index = parseInt(document.getElementById('light-index')?.value, 10) || 0;
+            send(this.lightPanelState);
+        });
+        document.getElementById('light-color-text')?.addEventListener('input', (e) => {
+            const value = /^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())
+                ? e.target.value.trim() : null;
+            if (value && document.getElementById('light-color').value !== value) {
+                document.getElementById('light-color').value = value;
+                this.lightPanelState.color = value;
+                send(this.lightPanelState);
+            }
+        });
+    }
+
+    applyLightIndexVisibility() {
+        const row = document.getElementById('light-index-row');
+        const mode = document.getElementById('light-effect')?.value;
+        if (row) row.style.display = mode === 'pixel' ? 'flex' : 'none';
+    }
+
+    async loadLightState() {
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`);
+            if (!response.ok) throw new Error(`status ${response.status}`);
+            const data = await response.json();
+            const current = data.current || {};
+            const power = current.power !== false;
+            const mode = current.mode || 'solid';
+            const color = current.color || '#008080';
+            const brightness = Number(current.brightness ?? 40);
+            const index = Number(current.index ?? 0);
+            this.lightPanelState = { power, mode, color, brightness, index };
+            const powerInput = document.getElementById('light-power');
+            const effect = document.getElementById('light-effect');
+            const colorInput = document.getElementById('light-color');
+            const colorText = document.getElementById('light-color-text');
+            const brightnessInput = document.getElementById('light-brightness');
+            const indexInput = document.getElementById('light-index');
+            if (powerInput) powerInput.checked = power;
+            if (effect) effect.value = mode;
+            if (colorInput) colorInput.value = color;
+            if (colorText) colorText.value = color;
+            if (brightnessInput) {
+                brightnessInput.value = brightness;
+                document.getElementById('light-brightness-val').textContent = String(brightness);
+            }
+            if (indexInput) indexInput.value = String(index);
+            this.applyLightIndexVisibility();
+            const status = document.getElementById('light-status-line');
+            if (status) status.textContent = '';
+        } catch (error) {
+            const status = document.getElementById('light-status-line');
+            if (status) status.textContent = `Current state unavailable: ${error.message}`;
+        }
+    }
+
+    async sendLightState(updates) {
+        this.lightPanelState = { ...this.lightPanelState, ...updates };
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.lightPanelState)
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || `status ${response.status}`);
+            }
+            const status = document.getElementById('light-status-line');
+            if (status) status.textContent = '';
+        } catch (error) {
+            const status = document.getElementById('light-status-line');
+            if (status) status.textContent = `LED state not applied: ${error.message}`;
+        }
     }
 
     async loadSystemState() {
@@ -1628,6 +1828,16 @@ class StudioUI {
             }
             case 'music':
                 return { label: 'Music', icon: '🎵' };
+            case 'ws2812': {
+                const ledNames = { off: 'LED Off', solid: 'LED Solid', rainbow: 'Rainbow',
+                    breathe: 'LED Breathe', chase: 'LED Chase',
+                    twinkle: 'LED Twinkle', confetti: 'LED Confetti',
+                    comet: 'LED Comet', marquee: 'LED Marquee',
+                    fire: 'LED Fire', gradient: 'LED Gradient',
+                    test: 'LED Test Walk', pixel: 'LED Pixel ' + (action.index ?? 0),
+                    preset: 'LED Preset' + (action.preset ? ': ' + action.preset : '') };
+                return { label: ledNames[action.mode] || 'LED', icon: '🌈' };
+            }
             default:
                 return { label: titleCase(action.type) || 'Action', icon: '⚙️' };
         }
@@ -1747,6 +1957,56 @@ class StudioUI {
                     <label>Text to Copy</label>
                     <textarea id="action-text" class="form-control" rows="3" placeholder="Text to copy...">${this.escapeHtml(existingAction?.text || '')}</textarea>
                 </div>
+            `,
+            'ws2812': `
+                <div class="form-group">
+                    <label>LED Mode</label>
+                    <select id="action-led-mode" class="form-control">
+                        <option value="off" ${existingAction?.mode === 'off' ? 'selected' : ''}>Off</option>
+                        <option value="solid" ${existingAction?.mode === 'solid' ? 'selected' : ''}>Solid Color</option>
+                        <option value="rainbow" ${existingAction?.mode === 'rainbow' ? 'selected' : ''}>Rainbow</option>
+                        <option value="breathe" ${existingAction?.mode === 'breathe' ? 'selected' : ''}>Breathe</option>
+                        <option value="chase" ${existingAction?.mode === 'chase' ? 'selected' : ''}>Chase</option>
+                        <option value="twinkle" ${existingAction?.mode === 'twinkle' ? 'selected' : ''}>Twinkle (sparkles)</option>
+                        <option value="confetti" ${existingAction?.mode === 'confetti' ? 'selected' : ''}>Confetti</option>
+                        <option value="comet" ${existingAction?.mode === 'comet' ? 'selected' : ''}>Comet</option>
+                        <option value="marquee" ${existingAction?.mode === 'marquee' ? 'selected' : ''}>Marquee banner</option>
+                        <option value="fire" ${existingAction?.mode === 'fire' ? 'selected' : ''}>Fire</option>
+                        <option value="gradient" ${existingAction?.mode === 'gradient' ? 'selected' : ''}>Flowing gradient</option>
+                        <option value="test" ${existingAction?.mode === 'test' ? 'selected' : ''}>Test (walk all pixels)</option>
+                        <option value="pixel" ${existingAction?.mode === 'pixel' ? 'selected' : ''}>Single Pixel</option>
+                        <option value="preset" ${existingAction?.mode === 'preset' ? 'selected' : ''}>Preset (WLED-style)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="led-preset-group" style="display: ${existingAction?.mode === 'preset' ? 'block' : 'none'};">
+                    <label>Preset (saved on the server, synced to the device)</label>
+                    <div style="display: flex; gap: 6px;">
+                        <select id="action-led-preset" class="form-control">
+                            <option value="">Loading presets…</option>
+                        </select>
+                        <button id="btn-led-preset-save" class="btn btn-secondary" type="button" title="Save current settings below as a new preset">💾</button>
+                        <button id="btn-led-preset-del" class="btn btn-secondary" type="button" title="Delete the selected preset">🗑</button>
+                    </div>
+                    <small style="opacity: 0.7;">For 💾 choose mode/color/brightness first, then save it under a name — buttons can then switch instantly.</small>
+                </div>
+                <div class="form-group">
+                    <label>Pixel Index (0–63, single-pixel mode)</label>
+                    <input type="number" id="action-led-index" class="form-control" min="0" max="63"
+                        value="${existingAction?.index ?? 0}">
+                    <small style="opacity: 0.7;">Linear LED number as wired: 0 = first pixel at the connector, +1 each pixel (rows on an 8x8 panel: index % 8 = row position).</small>
+                </div>
+                <div class="form-group">
+                    <label>Color (solid/breathe/chase)</label>
+                    <div class="color-picker-group">
+                        <input type="color" id="action-led-color" class="color-input" value="${this.attrValue(existingAction?.color || '#008080')}">
+                        <input type="text" id="action-led-color-text" class="form-control color-text" value="${this.attrValue(existingAction?.color || '#008080')}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Brightness (0–80, USB power limit)</label>
+                    <input type="number" id="action-led-brightness" class="form-control" min="0" max="80" value="${existingAction?.brightness ?? 40}">
+                </div>
+                <small style="display: block; margin-top: 6px; opacity: 0.7;">Runs locally on the ESP32 (WS2812B data on GPIO 22, CN1 connector). Mode is saved on the device and restored at boot.</small>
             `,
             'keyboard_shortcut': `
                 <div class="form-group">
@@ -1970,6 +2230,84 @@ class StudioUI {
 
         if (actionType === 'spotify') {
             this.setupSpotifyConfig(existingAction);
+        }
+
+        if (actionType === 'ws2812') {
+            this.setupWs2812Config(existingAction);
+        }
+    }
+
+    // WLED-style LED presets: list/save/delete via the server, referenced
+    // by name inside the button action (device syncs the list each cycle).
+    setupWs2812Config(existingAction = null) {
+        const modeSel = document.getElementById('action-led-mode');
+        const presetGroup = document.getElementById('led-preset-group');
+        modeSel?.addEventListener('change', () => {
+            if (presetGroup) {
+                presetGroup.style.display = modeSel.value === 'preset' ? 'block' : 'none';
+            }
+        });
+        this.refreshLedPresets(existingAction?.preset || '');
+        document.getElementById('btn-led-preset-save')?.addEventListener('click', () => this.ledPresetAction('save'));
+        document.getElementById('btn-led-preset-del')?.addEventListener('click', () => this.ledPresetAction('delete'));
+    }
+
+    async refreshLedPresets(selected = '') {
+        const sel = document.getElementById('action-led-preset');
+        if (!sel) return;
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`);
+            if (!response.ok) throw new Error(`load failed (${response.status})`);
+            const data = await response.json();
+            const presets = Array.isArray(data.presets) ? data.presets : [];
+            sel.innerHTML = presets.length
+                ? presets.map((p) =>
+                    `<option value="${this.escapeHtml(p.name)}"${p.name === selected ? ' selected' : ''}>${this.escapeHtml(p.name)}</option>`)
+                    .join('')
+                : '<option value="">No presets yet — 💾 save one</option>';
+        } catch (error) {
+            sel.innerHTML = '<option value="">Presets unavailable (server offline?)</option>';
+        }
+    }
+
+    async ledPresetAction(operation) {
+        const sel = document.getElementById('action-led-preset');
+        const name = (operation === 'save')
+            ? (prompt('Preset name (e.g. cinema, gaming, chill):') || '').trim()
+            : (sel?.value || '').trim();
+        if (!name) return;
+        const body = (operation === 'save')
+            ? {
+                op: 'save',
+                name,
+                mode: document.getElementById('action-led-mode')?.value || 'solid',
+                color: document.getElementById('action-led-color')?.value || '#008080',
+                brightness: parseInt(document.getElementById('action-led-brightness')?.value, 10) || 40,
+                index: parseInt(document.getElementById('action-led-index')?.value, 10) || 0
+            }
+            : { op: 'delete', name };
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || 'failed');
+            }
+            const presetMode = document.getElementById('action-led-mode');
+            if (operation === 'save' && presetMode) {
+                presetMode.value = 'preset';
+                document.getElementById('led-preset-group').style.display = 'block';
+            }
+            this.showToast(operation === 'save'
+                ? `Preset saved: ${name}`
+                : `Preset deleted: ${name}`, 2500);
+            this.autoFillLabelIcon(false);
+            await this.refreshLedPresets(operation === 'save' ? name : '');
+        } catch (error) {
+            this.showToast(`Preset ${operation}: ${error.message}`, 3000);
         }
     }
 
@@ -2582,6 +2920,14 @@ class StudioUI {
                 operation: document.getElementById('action-spotify-operation')?.value || 'toggle',
             }),
             'music': () => ({ type: 'music' }),
+            'ws2812': () => ({
+                type: 'ws2812',
+                mode: document.getElementById('action-led-mode')?.value || 'rainbow',
+                preset: document.getElementById('action-led-preset')?.value || '',
+                index: Math.max(0, Math.min(63, parseInt(document.getElementById('action-led-index')?.value, 10) || 0)),
+                color: document.getElementById('action-led-color')?.value || '#008080',
+                brightness: Math.max(0, Math.min(80, parseInt(document.getElementById('action-led-brightness')?.value, 10) || 40))
+            }),
             'macro': () => {
                 const steps = [];
                 document.querySelectorAll('#macro-steps-list .macro-step').forEach((row) => {

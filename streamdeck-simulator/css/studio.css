@@ -906,6 +906,35 @@ body.system-open .system-panel {
     display: block;
 }
 
+.light-panel {
+    position: fixed;
+    top: 76px;
+    right: 332px;
+    width: 280px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    background: rgba(16, 19, 26, 0.88);
+    backdrop-filter: blur(22px);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    display: none;
+    z-index: 1003;
+    padding: 16px;
+}
+
+body.light-open .light-panel {
+    display: block;
+}
+
+body.theme-light .light-panel {
+    background: rgba(250, 250, 252, 0.92);
+}
+
+@media (max-width: 900px) {
+    .light-panel { right: 16px; top: 140px; }
+}
+
 .system-row {
     display: flex;
     justify-content: space-between;

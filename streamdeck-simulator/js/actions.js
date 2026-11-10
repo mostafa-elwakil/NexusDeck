@@ -55,6 +55,7 @@ class ActionsEngine {
             'calendar': this.showCalendar.bind(this),
             'spotify': this.controlSpotify.bind(this),
             'music': this.showMusic.bind(this),
+            'ws2812': this.ledMatrix.bind(this),
             'custom': async (action, button) => {
                 if (typeof action.handler === 'function') {
                     return action.handler(action, button);
@@ -482,6 +483,53 @@ class ActionsEngine {
     async showMusic(action, button) {
         this.showNotification('Music Player',
             'MP3 playback happens on the ESP32 (SD card /mp3 folder).');
+    }
+
+    // WS2812 LED matrix: the command runs locally on the ESP32. The web
+    // deck only validates it against the server and shows what was queued
+    // (see also server.py execute-action, which treats it as device-local).
+    async ledMatrix(action, button) {
+        const modeName = action.mode === 'preset' && action.preset
+            ? `Preset: ${action.preset}`
+            : ({
+                off: 'Off', solid: 'Solid', rainbow: 'Rainbow',
+                breathe: 'Breathe', chase: 'Chase',
+                twinkle: 'Twinkle', confetti: 'Confetti',
+                comet: 'Comet', marquee: 'Marquee',
+                fire: 'Fire', gradient: 'Gradient',
+                test: 'Test Walk', pixel: `Pixel #${action.index ?? 0}`
+            }[action.mode] || action.mode || 'Rainbow');
+
+        if (this.serverAvailable) {
+            try {
+                const response = await fetch(`${this.serverUrl}/api/execute-action`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        actionType: 'ws2812',
+                        actionData: JSON.stringify({
+                            preset: action.preset,
+                            mode: action.mode,
+                            index: action.index,
+                            color: action.color,
+                            brightness: action.brightness
+                        })
+                    })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || 'LED command rejected');
+                }
+            } catch (error) {
+                appLogger.warn('WS2812 server check failed', {
+                    error: error.message,
+                    buttonIndex: button?.index
+                });
+            }
+        }
+
+        this.showNotification('WS2812 LED',
+            `Mode: ${modeName} — runs on the ESP32 (tap the button on the device)`);
     }
 
     async controlSpotify(action, button) {

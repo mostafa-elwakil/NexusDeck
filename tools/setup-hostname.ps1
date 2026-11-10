@@ -9,4 +9,4 @@ if (Test-Path $hosts) {
 $lines += $entry
 Set-Content -Path $hosts -Value $lines -Encoding ASCII -Force
 Write-Host "Done. https://nexusdeck/ now resolves to this PC."
-Write-Host "Then enable HTTPS: setx NEXUSDECK_HTTPS 1  (restart the server after)"
+Write-Host "HTTPS is on by default; trust the cert with trust-cert.ps1 (as admin)."

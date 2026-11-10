@@ -21,11 +21,14 @@
 #include <Preferences.h>
 #include <WiFiManager.h>
 #include <qrcode.h>
+#if ENABLE_DHT
 #include <DHT.h>
+#endif
 #include <AudioFileSourceHTTPStream.h>
 #include <AudioFileSourceBuffer.h>
 #include <AudioGeneratorMP3.h>
 #include <AudioOutputI2S.h>
+#include "ledmatrix.h"
 #include "config.h"
 #undef SERVER_URL
 #define SERVER_URL serverIP.c_str()
@@ -65,14 +68,20 @@ unsigned long lastMotionAt = 0;
 #define SPEAKER_PIN 26
 #define SPEAKER_CHANNEL 7
 // DHT22 temperature/humidity on a free header pin.
+// DISABLED by default: GPIO22 (its pin) is used by the WS2812B matrix data.
+// Set ENABLE_DHT 1 and move the LED to another pin to get it back.
+#define ENABLE_DHT 0
 #define DHT_PIN 22
 #define DHT_TYPE DHT22
 // PIR motion sensor (HIGH on motion) for auto wake/sleep.
 #define PIR_PIN 27
 #define PIR_IDLE_SEC 90
+
 #define ENABLE_CLICK true
 #define ENABLE_SD 0 // 1 = SD on (breaks touch on shared bus!)
+#if ENABLE_DHT
 DHT dht(DHT_PIN, DHT_TYPE);
+#endif
 
 void loadSettings() {
     preferences.begin("deck", false);
@@ -252,6 +261,16 @@ bool swipeDone = false;
 bool homeFetchPending = false; // fetch home data AFTER drawing (fast back)
 // Mapped touch coords for the current frame (shared by gesture + handlers)
 uint16_t touchX = 0, touchY = 0;
+
+// Ghost-touch filter: the CYD controller can emit a phantom frame (EMI /
+// floating sensor) that acts like a tap. A real finger is still down and
+// sampled again on the next frame(s), so require the same point across
+// GHOST_FRAMES consecutive frames before any touch starts to count.
+const uint8_t GHOST_FRAMES = 2;
+int16_t ghostLastX = -1;
+int16_t ghostLastY = -1;
+uint8_t ghostFrames = 0;
+bool ghostSettled = false;
 int pomoPageLastSecond = -1;
 bool pomoPageDirty = true;
 // Backlight alert state (phase-end notification)
@@ -341,6 +360,7 @@ bool setupSD();
 void sdSaveProfile(const String& name, const String& payload);
 bool sdLoadProfile(const String& name);
 bool sdLoadLastProfile();
+void ledSyncPresets();
 void musicScanSD();
 void openMusicPage();
 void closeMusicPage();
@@ -396,7 +416,12 @@ void setup() {
     deckBackgroundColor = parseColor(bgColorHex);
 
     pinMode(PIR_PIN, INPUT_PULLDOWN);
+#if ENABLE_DHT
     dht.begin();
+#endif
+
+    // WS2812B matrix (data on GPIO 22 = CN1 header): restore last mode, then animate
+    ledSetup();
 
     // Initialize buttons with defaults (before WiFi: an SD offline profile
     // loaded in setupWiFi() must survive instead of being wiped here)
@@ -463,6 +488,8 @@ void loop() {
     // Non-blocking buzzer sequences + MP3 streaming pump
     pumpBuzzer();
     musicPump();
+    // WS2812B matrix animation pump
+    ledPump();
     // Proven path: library reads on the custom-mapped bus (first init wins).
     // SD stays disabled (ENABLE_SD 0) so nothing ever remaps the bus.
     if (touch.tirqTouched() && touch.touched()) {
@@ -481,6 +508,10 @@ void loop() {
         if (swipeStartX < 0) {
             swipeStartX = touchX;
             swipeStartY = touchY;
+            ghostSettled = false;
+            ghostFrames = 0;
+            ghostLastX = -1;
+            ghostLastY = -1;
         }
     } else {
         swipeStartX = -1;
@@ -1019,9 +1050,27 @@ void drawButton(uint8_t index) {
         borderColor = TFT_RED;
     }
 
-    TFT_eSprite sprite = TFT_eSprite(&tft);
-    sprite.setColorDepth(16);
-    sprite.createSprite(BUTTON_WIDTH, BUTTON_HEIGHT);
+    // One reusable sprite for every button redraw: creating/freeing a 10KB
+    // sprite 12x per grid repaint was the main cost of returning from a page.
+    static TFT_eSprite btnSprite(&tft);
+    static bool btnSpriteReady = false;
+    if (!btnSpriteReady) {
+        btnSprite.setColorDepth(16);
+        btnSpriteReady = btnSprite.createSprite(BUTTON_WIDTH, BUTTON_HEIGHT) != nullptr;
+    }
+    if (!btnSpriteReady) {
+        // Low-memory fallback: draw straight on the TFT (slight flicker).
+        tft.fillRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, bgColor);
+        tft.drawRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, borderColor);
+        if (btn.label.length() > 0) {
+            tft.setTextColor(TFT_WHITE, bgColor);
+            tft.setTextDatum(MC_DATUM);
+            int fallbackY = (btn.icon.length() > 0) ? ((BUTTON_HEIGHT * 2) / 3) : (BUTTON_HEIGHT / 2);
+            tft.drawString(truncateText(btn.label, 10), x + BUTTON_WIDTH / 2, y + fallbackY, 2);
+        }
+        return;
+    }
+    TFT_eSprite& sprite = btnSprite;
     sprite.fillSprite(deckBackgroundColor);
     sprite.fillRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 6, bgColor);
     sprite.drawRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 6, borderColor);
@@ -1044,7 +1093,6 @@ void drawButton(uint8_t index) {
     }
 
     sprite.pushSprite(x, y);
-    sprite.deleteSprite();
 }
 
 // ===== Draw All Buttons =====
@@ -1056,7 +1104,9 @@ void drawAllButtons() {
 }
 
 void showGridOrPage() {
+    unsigned long started = millis();
     drawAllButtons();
+    Serial.printf("GRID REDRAW: %lums\n", millis() - started);
 }
 
 void drawDeckBackground() {
@@ -1109,6 +1159,23 @@ void handleTouch() {
         // Map calibrated raw touch coordinates to the rotated landscape screen.
         uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
         uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+
+        // Settle the point across consecutive frames before acting on it;
+        // phantom spikes disappear by the second frame, fingers stay.
+        if (!ghostSettled) {
+            if (ghostLastX >= 0 && abs(x - ghostLastX) <= 10 && abs(y - ghostLastY) <= 10) {
+                ghostFrames++;
+            } else {
+                ghostFrames = 1;
+            }
+            ghostLastX = x;
+            ghostLastY = y;
+            if (ghostFrames < GHOST_FRAMES) {
+                Serial.println("Touch frame dropped (ghost filter)");
+                return;
+            }
+            ghostSettled = true;
+        }
 
         static unsigned long lastTouchLog = 0;
         if (millis() - lastTouchLog > 500) {
@@ -1167,6 +1234,10 @@ void handleTouch() {
         }
     } else {
         // Finger released: run the pending tap unless a swipe already fired
+        ghostSettled = false;
+        ghostFrames = 0;
+        ghostLastX = -1;
+        ghostLastY = -1;
         if (pendingButton >= 0 && !gestureFired) {
             uint8_t idx = pendingButton;
             pendingButton = -1;
@@ -1312,6 +1383,21 @@ void executeButtonAction(uint8_t index) {
         Serial.println("Opening music player...");
         openMusicPage();
         setButtonState(index, 0);
+        return;
+    }
+
+    if (btn.actionType == "ws2812") {
+        Serial.println("WS2812 LED command");
+        String result = ledApplyAction(btn.actionData);
+        Serial.print("WS2812 result: ");
+        Serial.println(result);
+        if (result == "queued") {
+            setButtonState(index, 3);
+        } else {
+            setButtonState(index, 4);
+        }
+        drawButton(index);
+        scheduleButtonReset(index, 300);
         return;
     }
 
@@ -1502,6 +1588,21 @@ void applyProfilePayload(const String& payload) {
     }
 }
 
+// ===== WLED-style LED preset sync (cheap GET, once per sync cycle) =====
+void ledSyncPresets() {
+    if (!wifiConnected) return;
+    HTTPClient presetsHttp;
+    presetsHttp.setTimeout(5000);
+    espHttpBegin(presetsHttp, String(SERVER_URL) + "/api/led-presets");
+    int code = presetsHttp.GET();
+    if (code == 200) {
+        ledLoadPresetsJson(presetsHttp.getString());
+    } else if (code == 401) {
+        Serial.println("LED presets sync: token rejected");
+    }
+    presetsHttp.end();
+}
+
 void syncProfile() {
     if (!wifiConnected) return;
 
@@ -1563,6 +1664,10 @@ void syncProfile() {
     }
 
     http.end();
+    // Refresh the WLED-style preset list so ws2812 preset buttons work.
+    if (serverAvailable) {
+        ledSyncPresets();
+    }
     if (!anyOverlayActive()) {
         drawStatusBar();
     }
@@ -1737,6 +1842,7 @@ void clickSound() {
 
 // ===== DHT22 comfort sensor: real room temp/humidity =====
 void updateDHT() {
+#if ENABLE_DHT
     if (millis() - lastDhtRead < 30000) return;
     lastDhtRead = millis();
     float temp = dht.readTemperature();
@@ -1750,6 +1856,7 @@ void updateDHT() {
     } else if (!dhtOk) {
         Serial.println("DHT not detected (optional)");
     }
+#endif
 }
 
 // ===== PIR presence: wake on motion, sleep the screen when idle =====

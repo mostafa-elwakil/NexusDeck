@@ -30,7 +30,7 @@ CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', '127.0.0.1',
                    'https://nexusdeck', 'https://nexusdeck:*'])
 
 # Server configuration
-SERVER_VERSION = '2.4.3'
+SERVER_VERSION = '2.4.7'
 PORT = 8765
 HOST = '0.0.0.0'
 
@@ -3176,6 +3176,150 @@ if _valid_stored_profile(current_profile):
     _persist_profiles_store()
 
 
+# ===== WLED-style LED presets (server-managed, synced to the ESP32) =====
+LED_PRESETS_FILE = os.path.join(STATE_DIR, 'led_presets.json')
+LED_PRESET_MODES = ('off', 'solid', 'rainbow', 'breathe', 'chase', 'test', 'pixel',
+                    'twinkle', 'confetti', 'comet', 'marquee', 'fire', 'gradient')
+
+
+def _load_led_presets():
+    """Presets {name: {mode, color, brightness, index}} for the WS2812B matrix."""
+    if os.path.exists(LED_PRESETS_FILE):
+        try:
+            with open(LED_PRESETS_FILE, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {}
+
+
+def _persist_led_presets(presets):
+    try:
+        _atomic_write_json(LED_PRESETS_FILE, presets)
+        _audit_state_change('led-preset', f"presets={sorted(presets.keys())}")
+    except Exception as error:
+        log_request('ERROR', f'persist led presets: {error}')
+
+
+@app.route('/api/led-presets', methods=['GET'])
+@_require_api_token
+def list_led_presets():
+    """WLED-style presets + current master state; the ESP32 pulls this on every sync."""
+    log_request('GET /api/led-presets')
+    presets = _load_led_presets()
+    items = [
+        dict({'name': name}, **{key: value for key, value in cfg.items()
+                                if key in ('mode', 'color', 'brightness', 'index')})
+        for name, cfg in sorted(presets.items())
+    ]
+    state = _load_led_state()
+    return jsonify({'success': True, 'presets': items, 'current': state, 'rev': state.get('rev', 0)})
+
+
+# ===== LED master state (whole-strip control from the web Studio) =====
+LED_STATE_FILE = os.path.join(STATE_DIR, 'led_state.json')
+
+
+def _load_led_state():
+    try:
+        if os.path.exists(LED_STATE_FILE):
+            with open(LED_STATE_FILE, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {'power': True, 'mode': 'solid', 'color': '#008080',
+            'brightness': 40, 'index': 0, 'rev': 0}
+
+
+def _persist_led_state(state):
+    try:
+        _backup_state_file(LED_STATE_FILE)
+        _atomic_write_json(LED_STATE_FILE, state)
+        _audit_state_change('led-state', f"mode={state.get('mode')} rev={state.get('rev')}")
+    except Exception as error:
+        log_request('ERROR', f'persist led state: {error}')
+
+
+@app.route('/api/led-state', methods=['POST'])
+@_require_api_token
+def update_led_state():
+    """Whole-strip master state from the Studio light panel (device applies on rev change)."""
+    data = request.json or {}
+    log_request('POST /api/led-state',
+                f"power={data.get('power')} mode={data.get('mode')} rev={data.get('rev')}")
+    state = _load_led_state()
+    mode = str(data.get('mode') or state.get('mode') or 'solid').strip().lower()
+    if mode not in LED_PRESET_MODES:
+        return jsonify({'success': False,
+                        'error': f'mode must be one of: {", ".join(LED_PRESET_MODES)}'}), 400
+    try:
+        brightness = int(data.get('brightness', state.get('brightness', 40)))
+        index = int(data.get('index', state.get('index', 0)))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'brightness/index must be numbers'}), 400
+    state.update({
+        'power': bool(data.get('power', state.get('power', True))),
+        'mode': mode,
+        'color': str(data.get('color') or state.get('color') or '#008080')[:9],
+        'brightness': max(0, min(brightness, 255)),
+        'index': max(0, min(index, 63)),
+        'rev': int(state.get('rev', 0)) + 1,
+    })
+    _persist_led_state(state)
+    return jsonify({'success': True, 'message': 'LED state updated',
+                    'rev': state['rev']})
+
+
+app.add_url_rule('/api/led-state', 'update_led_state', update_led_state,
+                 methods=['POST'])
+
+
+def update_led_presets():
+    """Save or delete a named preset ('save' | 'delete')."""
+    data = request.json or {}
+    log_request('POST /api/led-presets', f"op={data.get('op')} name={data.get('name')}")
+    op = str(data.get('op') or '').strip().lower()
+    name = str(data.get('name') or '').strip()[:32]
+    if not name:
+        return jsonify({'success': False, 'error': 'Preset name required'}), 400
+    presets = _load_led_presets()
+    if op == 'delete':
+        if name not in presets:
+            return jsonify({'success': False, 'error': f'Unknown preset: {name}'}), 404
+        presets.pop(name, None)
+        _persist_led_presets(presets)
+        return jsonify({'success': True, 'message': f'Deleted preset: {name}',
+                        'count': len(presets)})
+    if op != 'save':
+        return jsonify({'success': False, 'error': "op must be 'save' or 'delete'"}), 400
+    mode = str(data.get('mode') or 'solid').strip().lower()
+    if mode not in LED_PRESET_MODES:
+        return jsonify({'success': False,
+                        'error': f'mode must be one of: {", ".join(LED_PRESET_MODES)}'}), 400
+    try:
+        brightness = int(data.get('brightness') or 40)
+        index = int(data.get('index') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'brightness/index must be numbers'}), 400
+    presets[name] = {
+        'mode': mode,
+        'color': str(data.get('color') or '#008080')[:9],
+        'brightness': max(0, min(brightness, 255)),
+        'index': max(0, min(index, 63)),
+    }
+    _persist_led_presets(presets)
+    return jsonify({'success': True, 'message': f'Saved preset: {name}',
+                    'count': len(presets)})
+
+
+app.add_url_rule('/api/led-presets', 'update_led_presets', update_led_presets,
+                 methods=['POST'])
+
+
 def _list_all_profiles():
     """Ordered profile list: remembered customizations override same-named
     presets, then remaining presets sorted by filename. The live current
@@ -3431,6 +3575,12 @@ def execute_action():
                 'error': f'Action type "{action_type}" can only run in the browser simulator'
             }), 400
 
+        elif action_type == 'ws2812':
+            return jsonify({
+                'success': True,
+                'message': 'WS2812 LED command runs on the ESP32 (tap the button on the device)'
+            }), 200
+
         return jsonify({
             'success': False,
             'error': f'Unsupported action type: {action_type}'
@@ -3504,7 +3654,9 @@ def _ensure_single_instance():
         message = (f"Another NexusDeck server is already running on port {PORT} - exiting.")
         print(message)
         try:
-            if platform.system() == 'Windows':
+            # GUI pop-up only for the frozen exe: a modal dialog inside
+            # tests / console runs would block forever waiting for a click.
+            if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
                 import ctypes
                 ctypes.windll.user32.MessageBoxW(
                     0, message + "\n\nOpen http://localhost:8765/ in your browser instead.",
@@ -3644,6 +3796,11 @@ def _maybe_start_https():
 
 if __name__ == '__main__':
     _redirect_output_to_log()
+    # Installer hook: create the self-signed cert + key, then exit.
+    # Used by setup.iss so https://nexusdeck/ is trusted BEFORE first launch.
+    if '--ensure-cert' in sys.argv[1:]:
+        _crt, _key = _ensure_tls_cert()
+        sys.exit(0 if _crt else 1)
     if '--minimized' in sys.argv[1:]:
         _minimize_own_console()
     # Make console output encoding-safe on Windows (prevents UnicodeEncodeError

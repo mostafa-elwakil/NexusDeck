@@ -42,14 +42,14 @@ Get the latest release from **GitHub → Releases**:
 
 | File | Platform | Contents |
 | --- | --- | --- |
-| `NexusDeck-Setup-vX.Y.Z-windows-x64.exe` | Windows 10/11 64-bit | **Recommended installer**: per-user setup, no admin needed, optional desktop icon + start at logon |
+| `NexusDeck-Setup-vX.Y.Z-windows-x64.exe` | Windows 10/11 64-bit | **Recommended installer**: maps + trusts `https://nexusdeck/` (one UAC prompt), optional desktop icon + start at logon |
 | `NexusDeck-vX.Y.Z-windows-x64.zip` | Windows 10/11 64-bit | Portable: `NexusDeckCompanion.exe` + launcher, UI built in |
 | `NexusDeck-vX.Y.Z-linux-x64.tar.gz` | Linux 64-bit (Ubuntu 22.04+) | Portable binary + launcher + `install.sh` installer |
 | `firmware-esp32-2432S028-vX.Y.Z.bin` (+ `.sha256` files) | ESP32-2432S028 (CYD) | Ready-to-flash firmware |
 
 1. **Windows**: run the `Setup-*.exe` installer — or extract the zip and run `Run-NexusDeck.bat`.
    **Linux**: extract the tarball and run `./install.sh` (add `--enable-background` to start at login, `--uninstall` to remove) — or just run `./run-nexusdeck.sh` portably.
-2. Open `http://localhost:8765/` (opens automatically).
+2. Open `https://nexusdeck/` (the installer sets this up; portable copies open `http://localhost:8765/`).
 3. Your profiles/settings are saved next to the executable and survive updates — just overwrite the old executable with the new one.
 
 ### Run in background (autostart at login)
@@ -149,6 +149,46 @@ The CYD display uses these hardware connections:
 | Touch MOSI | 32 |
 | Touch CS | 33 |
 | Touch IRQ | 36 |
+
+## WS2812B LED Matrix (8x8, 64 LEDs)
+
+أضِف مصفوفة LED قابلة للتخصيص (WS2812B-64) للوحة — تُسحب التعريفات من
+`esp32-firmware/src/ledmatrix.h` وتعمل عبر أزرار النوع `ws2812`.
+
+### التوصيل
+
+| WS2812B | إلى |
+| --- | --- |
+| VCC (5V) | 5V من منفذ USB للوحة (أو مصدر 5V خارجي عند رفع السطوع) |
+| GND | GND مشترك مع الـ ESP32 (إلزامي) |
+| Din (Data In) | GPIO **22** — الرجل الثالثة في القابس الأبيض CN1 بلا لحام (باب Dupont) — DHT معطّل في الفيرموير |
+
+> ملاحظات مهمة:
+> - المنفذ يغذي مصفوفة من **USB فقط**، لذلك السطوع مقيد في الفيرم-وير حتى
+>   **80** (من 255) — يكفي لمصباح حالة/زينة. للاستخدام الكامل السطوع استخدم
+>   مصدر 5V خارجي ~4A وارفع `WS2812_BRIGHTNESS_MAX` في `ledmatrix.h`.
+> - إذا كانت بكسلات الشبكة مقلوبة/مائلة، بدّل `WS2812_SERPENTINE` بين 0 و 1.
+> - إذا كان الترتيب أزرق/أحمر معكوساً، غيّر `GRB` في `ledSetup()` إلى `RGB`.
+> - البنود الافتراضية: السطوع 40، اللون سماوي (#008080)، والوضع المحفوظ يعود
+>   تلقائياً بعد إعادة التشغيل (محفوظ في NVS namespace `leds`).
+
+### التحكم من الاستوديو
+
+1. شغّل خادم `streamdeck-simulator` (NexusDeck Companion).
+2. افتح `http://localhost:8765/` واضغط `Ctrl+E` (Studio).
+3. اختر زراً → **Action Type: WS2812 LED Matrix**.
+4. حدد: **LED Mode** (Off / Solid / Rainbow / Breathe / Chase)، **Color**،
+   و**Brightness (0–80)**، ثم **Apply Changes**.
+5. المس الزر على الـ ESP32 — فتُطبَّق الإعدادات فوراً، ولا تنتقل الشبكة.
+
+يمكن أيضاً تغيير الوضع ببرمجية HTTP على الجهاز نفسه (الأزرار تفعل ذلك):
+
+```json
+{"actionType": "ws2812", "actionData": {"mode": "rainbow", "brightness": 50}}
+```
+
+الوضع المتاح في `ledmatrix.h`: `off`, `solid`, `rainbow`, `breathe`, `chase`
+(يستخدم رينبو/تشيس الكل من 64 بكسل بمصفوفة 8x8).
 
 ## Use the Device
 
@@ -336,12 +376,14 @@ TJpg_Decoder. Touch mapping is unchanged (same grid geometry).
 - The device picks it up on the next home-info sync; any fetch failure
   falls back to native drawing automatically.
 
-## Pretty URL: https://nexusdeck (instead of http://localhost:8765)
+## Pretty URL: https://nexusdeck (primary address)
 
-One-time setup (HTTPS stays alongside plain HTTP, which the ESP32 keeps using):
+The Windows installer does all of this automatically (maps the name, generates
+and trusts the self-signed cert). Manual equivalent — HTTPS runs alongside
+plain HTTP, which the ESP32 keeps using:
 
 1. **Name**: run `tools\setup-hostname.ps1` **as Administrator** (adds `127.0.0.1 nexusdeck` to hosts).
-2. **HTTPS**: `setx NEXUSDECK_HTTPS 1` (optional `NEXUSDECK_HTTPS_PORT`, default 443 — needs admin to bind; falls back to 8443), then restart the server. A self-signed cert is auto-created in the state folder.
+2. **HTTPS is on by default** (optional `NEXUSDECK_HTTPS_PORT`, default 443 — falls back to 8443; disable with `NEXUSDECK_HTTPS=0`). A self-signed cert is auto-created in the state folder on first start.
 3. **Trust** (removes the browser warning): run `tools\trust-cert.ps1` **as Administrator**, restart the browser.
 4. Open `https://nexusdeck/` — Studio detects the origin automatically. OAuth redirect URIs (Google/Spotify dashboards) must use the new origin if you use them.
 

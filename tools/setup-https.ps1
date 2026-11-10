@@ -1,19 +1,27 @@
 # NexusDeck: trust the server's self-signed cert right after install.
-# Runs elevated from the installer; waits briefly for the cert that the
-# server generates on first HTTPS start (Documents\NexusDeck\nexusdeck.crt).
-# If it does not exist yet (fresh install, server not launched yet), exit
-# quietly - the manual fallback is tools/trust-cert.ps1 as admin.
+# Runs elevated from the installer. The installer first runs
+# NexusDeckCompanion.exe --ensure-cert, so the .crt normally already exists.
+# The server's state dir is Documents\NexusDeck (APPDATA fallback when the
+# user has no Documents folder); check both, then trust in the machine store.
 param([string]$CertPath = "")
-if (-not $CertPath) {
-    $CertPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'NexusDeck\nexusdeck.crt'
+
+function Find-Cert {
+    if ($CertPath) { return $CertPath }
+    $candidates = @(
+        (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'NexusDeck\nexusdeck.crt'),
+        (Join-Path $env:USERPROFILE 'Documents\NexusDeck\nexusdeck.crt'),
+        (Join-Path $env:APPDATA 'NexusDeck\nexusdeck.crt')
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+    return ""
 }
-$deadline = (Get-Date).AddSeconds(10)
-while (-not (Test-Path $CertPath) -and (Get-Date) -lt $deadline) {
-    Start-Sleep -Milliseconds 500
-}
-if (-not (Test-Path $CertPath)) {
-    Write-Warning "cert not yet generated: $CertPath (run trust-cert.ps1 as admin after first launch)"
+
+$found = Find-Cert
+if (-not $found) {
+    Write-Warning "cert not generated yet (start NexusDeck once, then run tools\trust-cert.ps1 as admin)"
     exit 0
 }
-Import-Certificate -FilePath $CertPath -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-Write-Host "Trusted. https://nexusdeck/ is the primary address."
+Import-Certificate -FilePath $found -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+Write-Host "Trusted $found. https://nexusdeck/ is the primary address."
