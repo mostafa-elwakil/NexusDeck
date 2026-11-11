@@ -154,7 +154,11 @@ jobs:
         run: |
           $ver = "${{ github.ref_name }}"
           if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
-          Expand-Archive -Path staging/NexusDeck-*-windows-x64.zip -DestinationPath staging/pkg -Force
+          # Resolve the zip explicitly: a wildcard Path here can resolve to
+          # multiple files on newer PowerShell (zip + .zip.sha256) and fail.
+          $zipFile = Get-ChildItem staging -Filter *.zip | Select-Object -First 1
+          if (-not $zipFile) { Write-Error "No Windows zip found in staging artifact"; exit 1 }
+          Expand-Archive -LiteralPath $zipFile.FullName -DestinationPath staging/pkg -Force
           # NOTE: StagingDir must be absolute - Inno resolves relative Source
           # paths against the script's own directory, not the working dir.
           $stagingAbs = Join-Path (Get-Location) 'staging/pkg'
