@@ -103,7 +103,9 @@ jobs:
             streamdeck-simulator/server/*.sha256
 
   build-firmware:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 on purpose: ubuntu-latest moved to Ubuntu 26 (Oct 2026)
+    # where the espressif32 toolchain is not runnable yet.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -156,7 +158,17 @@ jobs:
           # NOTE: StagingDir must be absolute - Inno resolves relative Source
           # paths against the script's own directory, not the working dir.
           $stagingAbs = Join-Path (Get-Location) 'staging/pkg'
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe" /DMyAppVersion="$ver" /DStagingDir="$stagingAbs" /O"installer-out" tools/installer/windows/setup.iss
+          # choco now ships Inno Setup 7 (installed under "Inno Setup 7");
+          # search both installs so the build works on 6.x and 7.x.
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 7\iscc.exe",
+                     "${env:ProgramFiles}\Inno Setup 7\iscc.exe",
+                     "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe",
+                     "${env:ProgramFiles}\Inno Setup 6\iscc.exe") |
+                   Where-Object { Test-Path $_ } |
+                   Select-Object -First 1
+          if (-not $iscc) { Write-Error "ISCC.exe not found after choco install"; exit 1 }
+          Write-Host "Using ISCC: $iscc"
+          & $iscc /DMyAppVersion="$ver" /DStagingDir="$stagingAbs" /O"installer-out" tools/installer/windows/setup.iss
           $exe = Get-ChildItem installer-out/*.exe | Select-Object -First 1
           (Get-FileHash $exe.FullName -Algorithm SHA256).Hash + "  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii
           Get-ChildItem installer-out/
