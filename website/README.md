@@ -7,12 +7,40 @@ progressive-enhancement JavaScript. No build step, no frameworks, no dependencie
 
 ```
 website/
-├── index.html        # the landing page (navbar → hero → features → how-it-works → downloads → FAQ → footer)
+├── index.html        # the landing page (navbar → hero → features → how-it-works → downloads → pricing → FAQ → footer)
 ├── assets/
 │   ├── style.css     # all styling; palette via CSS variables (dark navy + teal #008080 accent)
-│   └── main.js       # optional: reveal-on-scroll + mock device clock; page works fine with JS disabled
+│   └── main.js       # optional: reveal-on-scroll, mock device clock, direct-download resolver; page works fine with JS disabled
 └── README.md
 ```
+
+## TODO before launch — store (Gumroad)
+
+The `#pricing` section in `index.html` ships with placeholders:
+
+- [ ] Create the two Gumroad products and put the **real URLs** in `index.html`:
+  - `https://mostafaelwakil.gumroad.com/l/nexusdeck-pro` → your real Pro product URL
+  - `https://mostafaelwakil.gumroad.com/l/nexusdeck-device` → your real device product URL
+- [ ] Replace the **placeholder prices** ($14 Pro / $99 device) with your real ones.
+- [ ] (Optional) Set a custom Gumroad subdomain, e.g. `nexusdeck.gumroad.com`.
+
+## Direct downloads (no GitHub releases page)
+
+All download buttons on the site point to
+`releases/latest/download/<fixed-name>` and never send visitors to the
+releases page. The fixed-name assets are produced by `.github/workflows/release.yml`
+on every tag:
+
+| Asset | Produced by |
+| --- | --- |
+| `NexusDeck-Setup-latest-windows-x64.exe` (+ `.sha256`) | build-installer-windows |
+| `firmware-esp32-2432S028-latest.bin` (+ `.sha256`) | build-firmware |
+| `NexusDeck-latest-linux-x64.tar.gz` (+ `.sha256`) | build-linux |
+
+`assets/main.js` also resolves the buttons through the GitHub API
+(`releases/latest`) and swaps the hrefs for the newest matching asset, so the
+buttons work immediately — even before the first release that carries the
+`latest` names.
 
 ## Publish to GitHub Pages
 
@@ -94,11 +122,12 @@ double-clicking `index.html` works offline.
 | `/` (#top) | Landing page |
 | `/#features` | Feature grid |
 | `/#setup` | How it works / setup steps |
-| `/#download` | Downloads (Windows, firmware, Linux) |
+| `/#download` | Direct downloads (Windows, firmware, Linux) |
+| `/#pricing` | Pricing: Free / Pro / Full device (Gumroad) |
 | `/#faq` | FAQ |
 | `/#faq-details` | Collapsible answers (in-page) |
-| GitHub → Releases | Windows installer + ESP32 firmware binaries |
-| GitHub → `tools/linux/install-server.sh` | Linux companion install script |
+| Gumroad (`/#pricing` buttons) | Pro plan + ready-built device |
+| GitHub → `tools/linux/install-server.sh` | Linux companion install script (source, advanced) |
 
 ## Notes
 

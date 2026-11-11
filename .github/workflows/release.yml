@@ -92,6 +92,10 @@ jobs:
           tarball="NexusDeck-$ver-linux-x64.tar.gz"
           tar -czf "$tarball" -C pkg .
           sha256sum "$tarball" > "$tarball.sha256"
+          # Fixed "latest" name so the website can link directly to
+          # releases/latest/download/<fixed-name> without visiting the repo.
+          cp "$tarball" "NexusDeck-latest-linux-x64.tar.gz"
+          sha256sum "NexusDeck-latest-linux-x64.tar.gz" > "NexusDeck-latest-linux-x64.tar.gz.sha256"
           ls -la *.tar.gz *.sha256
 
       - name: Upload artifact
@@ -121,7 +125,10 @@ jobs:
           if [ "$ver" = "main" ] || [ "$ver" = "master" ]; then ver="dev"; fi
           cp esp32-firmware/.pio/build/esp32-2432S028/firmware.bin \
              "firmware-esp32-2432S028-$ver.bin"
-          sha256sum firmware-esp32-2432S028-*.bin > firmware-esp32-2432S028-$ver.bin.sha256
+          sha256sum "firmware-esp32-2432S028-$ver.bin" > "firmware-esp32-2432S028-$ver.bin.sha256"
+          # Fixed "latest" name for direct website downloads.
+          cp "firmware-esp32-2432S028-$ver.bin" "firmware-esp32-2432S028-latest.bin"
+          sha256sum "firmware-esp32-2432S028-latest.bin" > "firmware-esp32-2432S028-latest.bin.sha256"
           ls -la firmware-esp32-*.bin*
 
       - name: Upload artifact
@@ -175,6 +182,10 @@ jobs:
           & $iscc /DMyAppVersion="$ver" /DStagingDir="$stagingAbs" /O"installer-out" tools/installer/windows/setup.iss
           $exe = Get-ChildItem installer-out/*.exe | Select-Object -First 1
           (Get-FileHash $exe.FullName -Algorithm SHA256).Hash + "  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii
+          # Fixed "latest" name so the website can link directly to
+          # releases/latest/download/NexusDeck-Setup-latest-windows-x64.exe.
+          Copy-Item $exe.FullName "installer-out/NexusDeck-Setup-latest-windows-x64.exe"
+          (Get-FileHash "installer-out/NexusDeck-Setup-latest-windows-x64.exe" -Algorithm SHA256).Hash + "  NexusDeck-Setup-latest-windows-x64.exe" | Out-File "installer-out/NexusDeck-Setup-latest-windows-x64.exe.sha256" -Encoding ascii
           Get-ChildItem installer-out/
 
       - name: Upload artifact

@@ -18,6 +18,7 @@
             <div class="nav-links">
                 <a href="#download">Download</a>
                 <a href="#features">Features</a>
+                <a href="#pricing">Pricing</a>
                 <a href="#setup">Setup</a>
                 <a href="#faq">FAQ</a>
                 <a href="https://github.com/mostafa-elwakil/NexusDeck">GitHub</a>
@@ -35,11 +36,11 @@
                     your own LAN. No cloud, no subscriptions, fully open source.
                 </p>
                 <div class="hero-ctas">
-                    <a class="btn btn-primary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest">Download for Windows</a>
-                    <a class="btn btn-secondary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest">ESP32 firmware</a>
+                    <a class="btn btn-primary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest/download/NexusDeck-Setup-latest-windows-x64.exe" data-download="installer">Download for Windows</a>
+                    <a class="btn btn-secondary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest/download/firmware-esp32-2432S028-latest.bin" data-download="firmware">ESP32 firmware</a>
                 </div>
                 <div class="hero-badges">
-                    <span>✓ Free &amp; open source</span>
+                    <span>✓ Free core &amp; open source</span>
                     <span>✓ 100% offline / LAN</span>
                     <span>✓ Windows + Linux server</span>
                 </div>
@@ -126,7 +127,7 @@
                 <div class="steps">
                     <article class="step reveal">
                         <h3>Flash the ESP32</h3>
-                        <p>Get the firmware from the releases page and flash it to an ESP32-2432S028R (2.8" touch) "Cheap Yellow Display".</p>
+                        <p>Get the firmware using the download button above and flash it to an ESP32-2432S028R (2.8" touch) "Cheap Yellow Display".</p>
                     </article>
                     <article class="step reveal">
                         <h3>Install the companion</h3>
@@ -143,25 +144,78 @@
         <section class="section alt" id="download">
             <div class="container">
                 <h2>Download</h2>
-                <p class="lead">Grab the latest release from GitHub. Free, no account, no telemetry.</p>
+                <p class="lead">Every button downloads the latest build directly — no account, no telemetry, no trip to GitHub.</p>
                 <div class="downloads-grid">
                     <article class="download-card reveal">
                         <h3>🪟 Windows x64 installer</h3>
                         <p>Recommended. Signed installer that maps and trusts <strong>https://nexusdeck/</strong> (one UAC prompt), with optional start-at-logon.</p>
-                        <a class="btn btn-primary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest">Windows installer</a>
+                        <a class="btn btn-primary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest/download/NexusDeck-Setup-latest-windows-x64.exe" data-download="installer">Windows installer</a>
                     </article>
                     <article class="download-card reveal">
                         <h3>📟 ESP32 firmware</h3>
                         <p>Firmware binary for the ESP32-2432S028R (2.8" CYD). Flash it, connect to your Wi-Fi, done.</p>
-                        <a class="btn btn-secondary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest">Firmware .bin</a>
+                        <a class="btn btn-secondary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest/download/firmware-esp32-2432S028-latest.bin" data-download="firmware">Firmware .bin</a>
                     </article>
                     <article class="download-card reveal">
-                        <h3>🐧 Linux</h3>
-                        <p>Install the companion server with <code>tools/linux/install-server.sh</code> from the repo — add <code>--uninstall</code> to remove it later.</p>
-                        <a class="btn btn-secondary" href="https://github.com/mostafa-elwakil/NexusDeck">Get the script</a>
+                        <h3>🐧 Linux x64 companion</h3>
+                        <p>Tarball with the server binary and <code>install.sh</code> — installs a systemd user service; run <code>./install.sh --uninstall</code> to remove it later.</p>
+                        <a class="btn btn-secondary" href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest/download/NexusDeck-latest-linux-x64.tar.gz" data-download="linux">Linux .tar.gz</a>
                     </article>
                 </div>
-                <p class="free-note">Everything above is free, open source, and needs no account.</p>
+                <p class="free-note">Everything above is free, open source, and needs no account. Want extras or a ready-built deck? See <a href="#pricing">pricing</a> below.</p>
+            </div>
+        </section>
+
+        <!-- TODO(store): replace the two Gumroad URLs and the placeholder prices
+             ($14 Pro / $99 device) with the real ones once the Gumroad products
+             are live. See website/README.md. -->
+        <section class="section" id="pricing">
+            <div class="container">
+                <h2>Pricing</h2>
+                <p class="lead">The core is free forever. One-time payments only — no subscriptions, no accounts.</p>
+                <div class="pricing-grid">
+                    <article class="plan reveal">
+                        <h3>Free</h3>
+                        <p class="price">$0</p>
+                        <p class="plan-desc">Everything you need to build your deck from parts.</p>
+                        <ul class="plan-list">
+                            <li>✓ Full web Studio — all 32 keys</li>
+                            <li>✓ Live widgets: clock, prayer times, Pomodoro, timer</li>
+                            <li>✓ PC actions, OBS control, Spotify &amp; Calendar</li>
+                            <li>✓ WS2812B LED matrix presets</li>
+                            <li>✓ Windows + Linux companion server</li>
+                            <li>✓ Community support on GitHub</li>
+                        </ul>
+                        <a class="btn btn-secondary" href="#download">Download free</a>
+                    </article>
+                    <article class="plan featured reveal">
+                        <span class="plan-badge">Most popular</span>
+                        <h3>Pro</h3>
+                        <p class="price">$14 <span class="price-note">one-time</span></p>
+                        <p class="plan-desc">Support the project and unlock the extras.</p>
+                        <ul class="plan-list">
+                            <li>✓ Everything in Free</li>
+                            <li>✓ Exclusive LED preset &amp; icon packs</li>
+                            <li>✓ Early access to new features</li>
+                            <li>✓ Priority email support</li>
+                            <li>✓ Lifetime updates</li>
+                        </ul>
+                        <a class="btn btn-primary" href="https://mostafaelwakil.gumroad.com/l/nexusdeck-pro">Buy Pro on Gumroad</a>
+                    </article>
+                    <article class="plan reveal">
+                        <h3>Full device</h3>
+                        <p class="price">$99 <span class="price-note">+ shipping</span></p>
+                        <p class="plan-desc">Skip the shopping list — a ready-built deck shipped to you.</p>
+                        <ul class="plan-list">
+                            <li>✓ Everything in Pro</li>
+                            <li>✓ Assembled ESP32 deck with 3D-printed case</li>
+                            <li>✓ 8×8 WS2812B LED matrix pre-wired</li>
+                            <li>✓ Flashed &amp; tested — works out of the box</li>
+                            <li>✓ USB cable included</li>
+                        </ul>
+                        <a class="btn btn-secondary" href="https://mostafaelwakil.gumroad.com/l/nexusdeck-device">Order on Gumroad</a>
+                    </article>
+                </div>
             </div>
         </section>
 
@@ -179,7 +233,8 @@
                     <details class="reveal">
                         <summary>Is it free?</summary>
                         <div class="answer">
-                            <p>Yes — NexusDeck is free and open source. No subscriptions, no accounts, no paywalled features. Star it on GitHub if it's useful to you.</p>
+                            <p>The core is free and open source: the full Studio editor, all widgets, PC actions, OBS control, LED presets, and the Windows + Linux companion server — no subscriptions, no paywalled essentials.</p>
+                            <p>Optionally, a one-time <a href="#pricing">Pro plan</a> ($14) adds exclusive preset/icon packs, early updates and priority support — and you can also order a <a href="#pricing">ready-built device</a> shipped to you. Both are sold on Gumroad, payments processed once, forever.</p>
                         </div>
                     </details>
                     <details class="reveal">
@@ -210,7 +265,8 @@
         <div class="container">
             <div class="footer-links">
                 <a href="https://github.com/mostafa-elwakil/NexusDeck">GitHub</a>
-                <a href="https://github.com/mostafa-elwakil/NexusDeck/releases/latest">Download</a>
+                <a href="#download">Download</a>
+                <a href="#pricing">Pricing</a>
                 <a href="#faq">FAQ</a>
             </div>
             <p>Built with ❤ for tinkerers</p>
