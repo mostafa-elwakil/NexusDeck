@@ -1588,6 +1588,34 @@ void applyProfilePayload(const String& payload) {
     }
 }
 
+// ===== Update check state (fed by ledSyncPresets from the server payload) =====
+bool updateAvailable = false;
+String updateLatestVersion = "";
+
+static void parseUpdateNotice(const String& payload) {
+    // Filtered ArduinoJson parse: only the top-level "update" object is
+    // materialized, so the big presets list costs nothing here.
+    StaticJsonDocument<192> filter;
+    filter["update"]["available"] = true;
+    filter["update"]["latest"] = true;
+    DynamicJsonDocument doc(192);
+    DeserializationError err = deserializeJson(
+        doc, payload, DeserializationOption::Filter(filter));
+    if (err) return;
+    JsonObjectConst upd = doc["update"].as<JsonObjectConst>();
+    if (upd.isNull()) return;
+    bool available = upd["available"] | false;
+    String latest = String(upd["latest"] | "");
+    if (available != updateAvailable || latest != updateLatestVersion) {
+        updateAvailable = available;
+        updateLatestVersion = latest;
+        if (available) {
+            Serial.printf("Update available: NexusDeck %s (flash + installer from GitHub)\n",
+                          updateLatestVersion.c_str());
+        }
+    }
+}
+
 // ===== WLED-style LED preset sync (cheap GET, once per sync cycle) =====
 void ledSyncPresets() {
     if (!wifiConnected) return;
@@ -1596,7 +1624,11 @@ void ledSyncPresets() {
     espHttpBegin(presetsHttp, String(SERVER_URL) + "/api/led-presets");
     int code = presetsHttp.GET();
     if (code == 200) {
-        ledLoadPresetsJson(presetsHttp.getString());
+        String payload = presetsHttp.getString();
+        ledLoadPresetsJson(payload);
+        if (payload.indexOf("\"update\"") >= 0) {
+            parseUpdateNotice(payload);
+        }
     } else if (code == 401) {
         Serial.println("LED presets sync: token rejected");
     }
@@ -3511,13 +3543,15 @@ void drawStatusBar() {
     static int lastCpuPercent = -1;
     static int lastRamPercent = -1;
     static String lastProfileName = "";
+    static bool lastUpdateAvailable = false;
 
     if (statusBarDrawn &&
         lastWifiConnected == wifiConnected &&
         lastServerAvailable == serverAvailable &&
         lastCpuPercent == cpuPercent &&
         lastRamPercent == ramPercent &&
-        lastProfileName == currentProfileName) {
+        lastProfileName == currentProfileName &&
+        lastUpdateAvailable == updateAvailable) {
         return;
     }
 
@@ -3526,6 +3560,7 @@ void drawStatusBar() {
     lastCpuPercent = cpuPercent;
     lastRamPercent = ramPercent;
     lastProfileName = currentProfileName;
+    lastUpdateAvailable = updateAvailable;
     statusBarDrawn = true;
 
     tft.fillRect(0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT, deckBackgroundColor);
@@ -3554,6 +3589,13 @@ void drawStatusBar() {
         tft.setTextDatum(MR_DATUM);
         tft.setTextColor(TFT_WHITE, deckBackgroundColor);
         tft.drawString(stats, homeBtnX - 6, STATUS_BAR_HEIGHT / 2 + 1, 1);
+
+        // Orange up-arrow = newer firmware/app release available (see Studio)
+        const int cy = STATUS_BAR_HEIGHT / 2;
+        const int ax = homeBtnX - 46;
+        if (updateAvailable) {
+            tft.fillTriangle(ax, cy + 3, ax + 8, cy + 3, ax + 4, cy - 3, TFT_ORANGE);
+        }
     }
 }
 

@@ -145,6 +145,8 @@ class StudioUI {
         this.applyTheme(this.theme);
         this.attachLightPanel();
         this.attachEventListeners();
+        this.checkForUpdates(false);
+        setInterval(() => this.checkForUpdates(false), 6 * 3600 * 1000);
         this.refreshProfileSwitcher();
         this.updateServerStatus(this.actions.serverAvailable);
     }
@@ -243,6 +245,10 @@ class StudioUI {
                 <button id="btn-toggle-light" class="toolbar-btn" title="ESP32 LED light panel (whole-strip control)" aria-label="LED light panel">
                     <span class="icon">💡</span>
                     <span class="label">Light</span>
+                </button>
+                <button id="btn-update-banner" class="toolbar-btn" title="A newer NexusDeck release is available" style="display: none; color: #ffcc33;">
+                    <span class="icon">⬆</span>
+                    <span class="label" id="update-banner-label">Update</span>
                 </button>
                 <button id="btn-system" class="toolbar-btn" title="Background & system settings" aria-label="System settings">
                     <span class="icon">⚙</span>
@@ -735,6 +741,37 @@ class StudioUI {
         } catch (error) {
             const status = document.getElementById('light-status-line');
             if (status) status.textContent = `LED state not applied: ${error.message}`;
+        }
+    }
+
+    // Update check: the server caches its GitHub probe for 6 h; the toolbar
+    // banner links to the latest Windows installer. A click re-asks (force=1).
+    async checkForUpdates(force) {
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/update-check${force ? '?force=1' : ''}`);
+            if (!response.ok) return;
+            const data = await response.json();
+            const update = data.success ? data.update : null;
+            const banner = document.getElementById('btn-update-banner');
+            if (!banner) return;
+            if (update && update.available) {
+                banner.style.display = '';
+                const label = document.getElementById('update-banner-label');
+                if (label) label.textContent = `Update ${update.latest}`;
+                banner.title = `${update.name || 'New release'} available — click to download & re-check`;
+                if (!banner.dataset.bound) {
+                    banner.dataset.bound = '1';
+                    banner.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        if (update.url) window.open(update.url, '_blank');
+                        this.checkForUpdates(true);
+                    });
+                }
+            } else {
+                banner.style.display = 'none';
+            }
+        } catch (error) {
+            // server offline or probe failed: leave the banner as-is
         }
     }
 

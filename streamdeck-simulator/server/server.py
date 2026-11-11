@@ -30,7 +30,7 @@ CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', '127.0.0.1',
                    'https://nexusdeck', 'https://nexusdeck:*'])
 
 # Server configuration
-SERVER_VERSION = '2.4.7'
+SERVER_VERSION = '2.4.8'
 PORT = 8765
 HOST = '0.0.0.0'
 
@@ -3215,7 +3215,9 @@ def list_led_presets():
         for name, cfg in sorted(presets.items())
     ]
     state = _load_led_state()
-    return jsonify({'success': True, 'presets': items, 'current': state, 'rev': state.get('rev', 0)})
+    return jsonify({'success': True, 'presets': items, 'current': state,
+                    'rev': state.get('rev', 0),
+                    'update': _update_payload()})
 
 
 # ===== LED master state (whole-strip control from the web Studio) =====
@@ -3276,6 +3278,113 @@ def update_led_state():
 
 app.add_url_rule('/api/led-state', 'update_led_state', update_led_state,
                  methods=['POST'])
+
+
+# ===== Update check (GitHub Releases; cached, probed by device + Studio) =====
+UPDATE_REPO = os.environ.get('NEXUSDECK_UPDATE_REPO', 'mostafa-elwakil/NexusDeck')
+UPDATE_CACHE_FILE = os.path.join(STATE_DIR, 'update_cache.json')
+UPDATE_CHECK_TTL = 6 * 3600  # seconds between real GitHub probes
+
+
+def _load_update_cache():
+    try:
+        if os.path.exists(UPDATE_CACHE_FILE):
+            with open(UPDATE_CACHE_FILE, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+            if isinstance(data, dict) and 'tag' in data:
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _persist_update_cache(cache):
+    try:
+        _atomic_write_json(UPDATE_CACHE_FILE, cache)
+    except Exception as error:
+        log_request('ERROR', f'persist update cache: {error}')
+
+
+def _version_key(version):
+    """'2.4.10' sorts numerically after '2.4.9' (compares int parts)."""
+    try:
+        return tuple(int(part) for part in str(version).split('.') if part.isdigit())
+    except (AttributeError, ValueError):
+        return ()
+
+
+def _probe_github_release():
+    import requests
+    response = requests.get(
+        f'https://api.github.com/repos/{UPDATE_REPO}/releases/latest',
+        headers={'Accept': 'application/vnd.github+json'}, timeout=10)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    release = response.json()
+    tag = str(release.get('tag_name') or '').strip().lstrip('vV')
+    if not tag:
+        return None
+    download_url = str(release.get('html_url') or
+                       f'https://github.com/{UPDATE_REPO}/releases/latest')
+    for asset in release.get('assets') or []:
+        name = str(asset.get('name') or '')
+        if 'windows-x64' in name.lower() and name.lower().endswith('.exe'):
+            download_url = str(asset.get('browser_download_url') or download_url)
+            break
+    return {
+        'tag': tag,
+        'version': tag,
+        'name': str(release.get('name') or ''),
+        'notes': str(release.get('body') or '')[:400],
+        'url': download_url,
+        'checked_at': int(time.time()),
+    }
+
+
+def _update_payload(force=False):
+    """Current update info from cache; probes GitHub when the cache is stale."""
+    def _base(available, info=None):
+        payload = {'available': bool(available), 'latest': SERVER_VERSION,
+                   'current': SERVER_VERSION, 'url': ''}
+        if info:
+            payload.update({'latest': info.get('version', SERVER_VERSION),
+                            'name': info.get('name', ''),
+                            'notes': info.get('notes', ''),
+                            'url': info.get('url', ''),
+                            'checked_at': info.get('checked_at', 0)})
+        return payload
+
+    cache = _load_update_cache()
+    fresh = (int(cache.get('checked_at') or 0) > time.time() - UPDATE_CHECK_TTL)
+    if fresh and not force:
+        return _base(_version_key(cache.get('tag', '')) > _version_key(SERVER_VERSION), cache)
+    try:
+        info = _probe_github_release()
+        if info is None:  # repo without releases yet: long negative cache
+            info = {'tag': SERVER_VERSION, 'version': SERVER_VERSION,
+                    'name': '', 'notes': '', 'url': '',
+                    'checked_at': int(time.time())}
+        _persist_update_cache(info)
+        return _base(_version_key(info.get('tag', '')) > _version_key(SERVER_VERSION), info)
+    except Exception as error:
+        log_request('ERROR', f'update probe: {error}')
+        # Negative cache so a flaky/offline connection does not slow the
+        # device's 3 s sync loop with a doomed probe every cycle.
+        if not fresh:
+            _persist_update_cache({'tag': SERVER_VERSION, 'version': SERVER_VERSION,
+                                   'name': '', 'notes': '', 'url': '',
+                                   'checked_at': int(time.time())})
+        return _base(_version_key(cache.get('tag', '')) > _version_key(SERVER_VERSION),
+                     cache if cache.get('tag') else None)
+
+
+@app.route('/api/update-check', methods=['GET'])
+def update_check():
+    """Latest GitHub release vs the running SERVER_VERSION (cached 6 h)."""
+    force = request.args.get('force') == '1'
+    log_request('GET /api/update-check', f"force={force}")
+    return jsonify({'success': True, 'update': _update_payload(force)})
 
 
 def update_led_presets():

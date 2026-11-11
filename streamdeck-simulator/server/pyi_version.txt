@@ -31,12 +31,12 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'Mostafa Elwakil'),
         StringStruct('FileDescription', 'NexusDeck Companion'),
-        StringStruct('FileVersion', '2.4.7.0'),
+        StringStruct('FileVersion', '2.4.8.0'),
         StringStruct('InternalName', 'NexusDeckCompanion'),
         StringStruct('LegalCopyright', 'Copyright (C) 2026 Mostafa Elwakil'),
         StringStruct('OriginalFilename', 'NexusDeckCompanion.exe'),
         StringStruct('ProductName', 'NexusDeck Companion'),
-        StringStruct('ProductVersion', '2.4.7.0')])
+        StringStruct('ProductVersion', '2.4.8.0')])
       ]), 
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
