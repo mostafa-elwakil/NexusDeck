@@ -370,6 +370,90 @@ img { max-width: 100%; }
     margin-top: 24px;
 }
 
+.free-note a { color: var(--accent-bright); }
+
+/* Pricing */
+
+.pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 18px;
+    align-items: stretch;
+    padding-top: 12px; /* room for the featured badge that sticks out */
+}
+
+.plan {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+}
+
+.plan.featured {
+    border-color: var(--accent);
+    background: linear-gradient(180deg, var(--accent-soft), var(--bg-card) 55%);
+    box-shadow: 0 14px 44px rgba(20, 184, 184, 0.14);
+}
+
+.plan-badge {
+    position: absolute;
+    top: -12px;
+    left: 24px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 999px;
+}
+
+.plan h3 {
+    margin: 6px 0 0;
+    font-size: 1.15rem;
+}
+
+.plan .price {
+    margin: 0;
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.plan .price-note {
+    font-size: 0.82rem;
+    font-weight: 400;
+    color: var(--muted);
+}
+
+.plan-desc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+}
+
+.plan-list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.92rem;
+}
+
+.plan .btn {
+    margin-top: auto;
+    align-self: stretch;
+    text-align: center;
+}
+
 /* FAQ */
 
 .faq { max-width: 760px; }
