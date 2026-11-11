@@ -69,41 +69,12 @@ git subtree push --prefix website origin gh-pages
 Then in **Settings → Pages**, set Source = **Deploy from a branch**, branch =
 `gh-pages`, folder `/ (root)`.
 
-### Option C — GitHub Actions
+### Option C — GitHub Actions (already set up in this repo)
 
-Create `.github/workflows/pages.yml`:
-
-```yaml
-name: Deploy website to Pages
-on:
-  push:
-    branches: [main]
-    paths: ["website/**"]
-permissions:
-  pages: write
-  contents: read
-  id-token: write
-concurrency:
-  group: pages
-  cancel-in-progress: true
-jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: website
-      - id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-In **Settings → Pages**, set Source = **GitHub Actions**. Every push that touches
-`website/` redeploys.
+`.github/workflows/pages.yml` does exactly this and is already committed —
+no need to create anything. Just set **Settings → Pages → Source =
+GitHub Actions** (the repo owner's API was used to enable it once). Every
+push to `main` that touches `website/` redeploys automatically.
 
 ## Test locally
 

@@ -1,0 +1,40 @@
+name: Deploy website to Pages
+
+# Publishes the marketing site (website/) to GitHub Pages whenever it changes
+# on main. Requires Settings → Pages → Source = "GitHub Actions" (enabled
+# automatically once via the API, or manually in repo settings).
+
+on:
+  push:
+    branches: [main]
+    paths: ['website/**']
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # ubuntu-24.04 on purpose: pinned like release.yml (ubuntu-latest
+    # migrated to Ubuntu 26 in Oct 2026).
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
