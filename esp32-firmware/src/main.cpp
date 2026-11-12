@@ -277,14 +277,19 @@ bool ghostSettled = false;
 // keys. The four values are the raw XPT2046 readings measured at the
 // screen corners; defaults keep the original hard-coded map until the
 // user runs calibration (home page: hold the clock 2.5s).
-float calX0 = 200, calX1 = 3700;  // raw x at screen x=0 / x=W-1
-float calY0 = 240, calY1 = 3800;  // raw y at screen y=0 / y=H-1
+float calX0 = 200, calX1 = 3700;  // raw reading at screen x=0 / x=W-1
+float calY0 = 240, calY1 = 3800;  // raw reading at screen y=0 / y=H-1
+bool calSwap = false;             // true: panel axes rotated 90° vs display
 bool touchCalPageActive = false;
 uint8_t tcalTarget = 0;           // 0..3 crosshair index
 float tcalSumX = 0, tcalSumY = 0;
 uint16_t tcalSamples = 0;
 int16_t tcalRawX[4], tcalRawY[4];
 bool tcalReady = false;           // armed after the opening finger lifts
+// Verification screen after saving: dot must follow the finger exactly
+bool tcalVerify = false;
+unsigned long tcalHoldStart = 0;
+uint16_t tcalLastVX = 0xFFFF, tcalLastVY = 0xFFFF;
 int pomoPageLastSecond = -1;
 bool pomoPageDirty = true;
 // Backlight alert state (phase-end notification)
@@ -415,7 +420,7 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n=================================");
     Serial.println("NexusDeck ESP32-2432S028 Firmware");
-    Serial.println("FW-BUILD: touch-cal-v3");
+    Serial.println("FW-BUILD: touch-cal-v4");
     Serial.println("=================================\n");
 
     // Pin scan runs before ANY peripheral claims pins (SD/TFT/touch).
@@ -1200,17 +1205,20 @@ void touchSelfTest() {
 // on units whose resistive panel is slightly off.
 
 void mapTouchRaw(const TS_Point& p, uint16_t& outX, uint16_t& outY) {
-    // Linear raw->screen map from measured corner endpoints; panel
-    // inversion is handled automatically because both ends are measured,
-    // never assumed.
-    int32_t x = (int32_t)(p.x - calX0) * (SCREEN_WIDTH - 1) / (int32_t)(calX1 - calX0);
-    int32_t y = (int32_t)(p.y - calY0) * (SCREEN_HEIGHT - 1) / (int32_t)(calY1 - calY0);
+    // Linear raw->screen map from measured corner endpoints. calSwap covers
+    // units whose resistive panel is rotated 90° vs the display; inversion
+    // is handled automatically because both ends are measured, never assumed.
+    float vx = calSwap ? (float)p.y : (float)p.x;
+    float vy = calSwap ? (float)p.x : (float)p.y;
+    int32_t x = (int32_t)((vx - calX0) * (SCREEN_WIDTH - 1) / (calX1 - calX0));
+    int32_t y = (int32_t)((vy - calY0) * (SCREEN_HEIGHT - 1) / (calY1 - calY0));
     outX = constrain(x, 0, SCREEN_WIDTH - 1);
     outY = constrain(y, 0, SCREEN_HEIGHT - 1);
 }
 
 void loadTouchCal() {
     preferences.begin("deck", true);
+    calSwap = preferences.getBool("tc_swap", false);
     calX0 = preferences.getFloat("tc_x0", 200.0f);
     calX1 = preferences.getFloat("tc_x1", 3700.0f);
     calY0 = preferences.getFloat("tc_y0", 240.0f);
@@ -1219,11 +1227,13 @@ void loadTouchCal() {
     // Insane stored values fall back to the legacy map
     if (fabsf(calX1 - calX0) < 800) { calX0 = 200; calX1 = 3700; }
     if (fabsf(calY1 - calY0) < 800) { calY0 = 240; calY1 = 3800; }
-    Serial.printf("Touch cal: x %.0f..%.0f  y %.0f..%.0f\n", calX0, calX1, calY0, calY1);
+    Serial.printf("Touch cal: swap=%d x %.0f..%.0f  y %.0f..%.0f\n",
+                  calSwap, calX0, calX1, calY0, calY1);
 }
 
 void saveTouchCal() {
     preferences.begin("deck", false);
+    preferences.putBool("tc_swap", calSwap);
     preferences.putFloat("tc_x0", calX0);
     preferences.putFloat("tc_x1", calX1);
     preferences.putFloat("tc_y0", calY0);
@@ -1254,6 +1264,7 @@ void drawTouchCalPage() {
 
 void openTouchCalPage() {
     touchCalPageActive = true;
+    tcalVerify = false;
     tcalTarget = 0;
     tcalSumX = tcalSumY = 0;
     tcalSamples = 0;
@@ -1262,11 +1273,67 @@ void openTouchCalPage() {
     Serial.println("Touch calibration opened (home: hold clock 2.5s)");
 }
 
+// Least-squares error of fitting raw counts -> pixels for one axis over
+// the 4 corner samples (used to auto-detect a 90° panel rotation).
+static float tcalAxisError(const int16_t* raw, const int16_t* target) {
+    float mv = 0, mt = 0;
+    for (uint8_t i = 0; i < 4; i++) { mv += raw[i]; mt += target[i]; }
+    mv /= 4.0f; mt /= 4.0f;
+    float num = 0, den = 0;
+    for (uint8_t i = 0; i < 4; i++) {
+        float dv = raw[i] - mv, dt = target[i] - mt;
+        num += dv * dt;
+        den += dv * dv;
+    }
+    if (fabsf(den) < 1.0f) return 1e9f;
+    float slope = num / den;
+    float intercept = mt - slope * mv;
+    float err = 0;
+    for (uint8_t i = 0; i < 4; i++) {
+        float pred = slope * raw[i] + intercept - target[i];
+        err += pred * pred;
+    }
+    return err;
+}
+
+void drawTouchVerifyPage() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("VERIFY: touch anywhere", SCREEN_WIDTH / 2, 10, 2);
+    tft.setTextColor(TFT_SILVER, TFT_BLACK);
+    tft.drawString("The dot must follow your finger", SCREEN_WIDTH / 2, 26, 2);
+    tft.drawString("Hold 2s to finish", SCREEN_WIDTH / 2, 224, 2);
+}
+
 void finishTouchCal() {
-    float x0 = (tcalRawX[0] + tcalRawX[3]) / 2.0f; // left corners
-    float x1 = (tcalRawX[1] + tcalRawX[2]) / 2.0f; // right corners
-    float y0 = (tcalRawY[0] + tcalRawY[1]) / 2.0f; // top corners
-    float y1 = (tcalRawY[2] + tcalRawY[3]) / 2.0f; // bottom corners
+    // Auto-detect the axis assignment: on some CYD units the resistive
+    // panel is rotated 90° vs the display (raw X is the screen's Y axis).
+    // Fit both candidates against the known corner targets, keep the best.
+    int16_t tx[4], ty[4];
+    for (uint8_t i = 0; i < 4; i++) {
+        tx[i] = TCAL_TARGETS[i][0];
+        ty[i] = TCAL_TARGETS[i][1];
+    }
+    float errPlain = tcalAxisError(tcalRawX, tx) + tcalAxisError(tcalRawY, ty);
+    float errSwapped = tcalAxisError(tcalRawY, tx) + tcalAxisError(tcalRawX, ty);
+    bool swap = errSwapped < errPlain;
+    Serial.printf("Touch cal fit: plain=%.0f swapped=%.0f -> swap=%d\n",
+                  errPlain, errSwapped, swap);
+
+    // Raw endpoints at the screen edges, for the chosen axis assignment
+    float x0, x1, y0, y1;
+    if (!swap) {
+        x0 = (tcalRawX[0] + tcalRawX[3]) / 2.0f; // left corners
+        x1 = (tcalRawX[1] + tcalRawX[2]) / 2.0f; // right corners
+        y0 = (tcalRawY[0] + tcalRawY[1]) / 2.0f; // top corners
+        y1 = (tcalRawY[2] + tcalRawY[3]) / 2.0f; // bottom corners
+    } else {
+        x0 = (tcalRawY[0] + tcalRawY[3]) / 2.0f;
+        x1 = (tcalRawY[1] + tcalRawY[2]) / 2.0f;
+        y0 = (tcalRawX[0] + tcalRawX[1]) / 2.0f;
+        y1 = (tcalRawX[2] + tcalRawX[3]) / 2.0f;
+    }
     if (fabsf(x1 - x0) < 800 || fabsf(y1 - y0) < 800) {
         Serial.println("Touch cal: spread too small, restarting");
         tft.fillScreen(TFT_BLACK);
@@ -1283,15 +1350,54 @@ void finishTouchCal() {
         drawTouchCalPage();
         return;
     }
+    calSwap = swap;
     calX0 = x0; calX1 = x1; calY0 = y0; calY1 = y1;
     saveTouchCal();
-    touchCalPageActive = false;
-    showGridOrPage();
-    drawStatusBar();
-    Serial.printf("Touch cal saved: x %.0f..%.0f  y %.0f..%.0f\n", calX0, calX1, calY0, calY1);
+    Serial.printf("Touch cal saved (swap=%d): x %.0f..%.0f  y %.0f..%.0f\n",
+                  calSwap, calX0, calX1, calY0, calY1);
+
+    // Verification screen: the dot must follow the finger exactly
+    tcalVerify = true;
+    tcalHoldStart = 0;
+    tcalLastVX = tcalLastVY = 0xFFFF;
+    drawTouchVerifyPage();
 }
 
 void handleTouchCalTouch() {
+    // VERIFY mode: show where every press lands, hold 2s to finish
+    if (tcalVerify) {
+        if (touchDown) {
+            uint16_t x, y;
+            mapTouchRaw(touchPoint, x, y);
+            if (x != tcalLastVX || y != tcalLastVY) {
+                if (tcalLastVX != 0xFFFF) {
+                    tft.fillCircle(tcalLastVX, tcalLastVY, 4, TFT_BLACK);
+                }
+                tft.fillCircle(x, y, 4, TFT_CYAN);
+                tcalLastVX = x;
+                tcalLastVY = y;
+            }
+            static unsigned long lastVerifyLog = 0;
+            if (millis() - lastVerifyLog > 400) {
+                Serial.printf("Verify raw=%d,%d -> screen=%u,%u\n",
+                              touchPoint.x, touchPoint.y, x, y);
+                lastVerifyLog = millis();
+            }
+            if (tcalHoldStart == 0) tcalHoldStart = millis();
+            if (millis() - tcalHoldStart > 2000) {
+                tcalVerify = false;
+                tcalHoldStart = 0;
+                touchCalPageActive = false;
+                showGridOrPage();
+                drawStatusBar();
+                Serial.println("Touch verify done");
+            }
+        } else {
+            tcalHoldStart = 0;
+        }
+        return;
+    }
+
     if (touchDown) {
         if (!tcalReady) return; // ignore the press that opened the page
         TS_Point p = touchPoint;
