@@ -418,12 +418,16 @@ void fetchProfileNames();
 void switchToHomeProfile(uint8_t slot);
 String homeClockHM();
 
+// Build tag shown on the boot screen + Serial so the flashed version is
+// visible on the device itself (no serial monitor needed to tell versions).
+const char* FW_TAG = "touch-cal-v6";
+
 // ===== Setup =====
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=================================");
     Serial.println("NexusDeck ESP32-2432S028 Firmware");
-    Serial.println("FW-BUILD: touch-cal-v5-fastloop");
+    Serial.printf("FW-BUILD: %s\n", FW_TAG);
     Serial.println("=================================\n");
 
     // Pin scan runs before ANY peripheral claims pins (SD/TFT/touch).
@@ -801,13 +805,16 @@ void setupDisplay() {
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(1);
 
-    // Show splash screen
+    // Show splash screen (with the build tag — tells the flashed version
+    // just by watching the device at power-up)
     tft.fillScreen(deckBackgroundColor);
     tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("NexusDeck CYD", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 20, 4);
-    tft.drawString("Initializing...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 20, 2);
-    delay(2000);
+    tft.drawString("NexusDeck CYD", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 30, 4);
+    tft.drawString("Initializing...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 16, 2);
+    tft.setTextColor(TFT_CYAN, TFT_DARK_BG);
+    tft.drawString(FW_TAG, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 42, 2);
+    delay(2500);
 
     Serial.println("Display initialized!");
 }
@@ -1306,12 +1313,24 @@ static float tcalAxisError(const int16_t* raw, const int16_t* target) {
 
 void drawTouchVerifyPage() {
     tft.fillScreen(TFT_BLACK);
+    // Numbered 4x3 grid: press a cell and its border lights cyan — this
+    // shows exactly which button index the firmware believes was touched.
     tft.setTextDatum(MC_DATUM);
+    for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
+        uint8_t col = i % GRID_COLS;
+        uint8_t row = i / GRID_COLS;
+        int16_t bx = BUTTON_PADDING + col * (BUTTON_WIDTH + BUTTON_PADDING);
+        int16_t by = GRID_Y_OFFSET + BUTTON_PADDING + row * (BUTTON_HEIGHT + BUTTON_PADDING);
+        tft.drawRect(bx, by, BUTTON_WIDTH, BUTTON_HEIGHT, TFT_DARKGREY);
+        char num[4];
+        snprintf(num, sizeof(num), "%u", i + 1);
+        tft.setTextColor(0x632C, TFT_BLACK); // dim grey number
+        tft.drawString(num, bx + BUTTON_WIDTH / 2, by + BUTTON_HEIGHT / 2, 2);
+    }
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString("VERIFY: touch anywhere", SCREEN_WIDTH / 2, 10, 2);
+    tft.drawString("VERIFY: touch a cell", SCREEN_WIDTH / 2, 9, 2);
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
-    tft.drawString("The dot must follow your finger", SCREEN_WIDTH / 2, 26, 2);
-    tft.drawString("Hold 2s to finish", SCREEN_WIDTH / 2, 224, 2);
+    tft.drawString("Hold 2s to finish", SCREEN_WIDTH / 2, 226, 2);
 }
 
 void finishTouchCal() {
@@ -1372,7 +1391,7 @@ void finishTouchCal() {
 }
 
 void handleTouchCalTouch() {
-    // VERIFY mode: show where every press lands, hold 2s to finish
+    // VERIFY mode: show where every press lands + which cell it picks
     if (tcalVerify) {
         if (touchDown) {
             uint16_t x, y;
@@ -1385,10 +1404,28 @@ void handleTouchCalTouch() {
                 tcalLastVX = x;
                 tcalLastVY = y;
             }
+            // Highlight the cell the firmware believes is touched
+            static int8_t lastCell = -1;
+            int8_t cell = getTouchedButton(x, y);
+            if (cell != lastCell) {
+                if (lastCell >= 0) {
+                    uint8_t pc = lastCell % GRID_COLS, pr = lastCell / GRID_COLS;
+                    tft.drawRect(BUTTON_PADDING + pc * (BUTTON_WIDTH + BUTTON_PADDING),
+                                 GRID_Y_OFFSET + BUTTON_PADDING + pr * (BUTTON_HEIGHT + BUTTON_PADDING),
+                                 BUTTON_WIDTH, BUTTON_HEIGHT, TFT_DARKGREY);
+                }
+                if (cell >= 0) {
+                    uint8_t cc = cell % GRID_COLS, cr = cell / GRID_COLS;
+                    tft.drawRect(BUTTON_PADDING + cc * (BUTTON_WIDTH + BUTTON_PADDING),
+                                 GRID_Y_OFFSET + BUTTON_PADDING + cr * (BUTTON_HEIGHT + BUTTON_PADDING),
+                                 BUTTON_WIDTH, BUTTON_HEIGHT, TFT_CYAN);
+                }
+                lastCell = cell;
+            }
             static unsigned long lastVerifyLog = 0;
             if (millis() - lastVerifyLog > 400) {
-                Serial.printf("Verify raw=%d,%d -> screen=%u,%u\n",
-                              touchPoint.x, touchPoint.y, x, y);
+                Serial.printf("Verify raw=%d,%d -> screen=%u,%u cell=%d\n",
+                              touchPoint.x, touchPoint.y, x, y, cell);
                 lastVerifyLog = millis();
             }
             if (tcalHoldStart == 0) tcalHoldStart = millis();
