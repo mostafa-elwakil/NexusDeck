@@ -271,6 +271,20 @@ int16_t ghostLastX = -1;
 int16_t ghostLastY = -1;
 uint8_t ghostFrames = 0;
 bool ghostSettled = false;
+
+// Per-unit touch calibration (NVS-persisted). Resistive panels differ by
+// hundreds of raw counts between units, so a fixed map presses neighbor
+// keys. The four values are the raw XPT2046 readings measured at the
+// screen corners; defaults keep the original hard-coded map until the
+// user runs calibration (home page: hold the clock 2.5s).
+float calX0 = 200, calX1 = 3700;  // raw x at screen x=0 / x=W-1
+float calY0 = 240, calY1 = 3800;  // raw y at screen y=0 / y=H-1
+bool touchCalPageActive = false;
+uint8_t tcalTarget = 0;           // 0..3 crosshair index
+float tcalSumX = 0, tcalSumY = 0;
+uint16_t tcalSamples = 0;
+int16_t tcalRawX[4], tcalRawY[4];
+bool tcalReady = false;           // armed after the opening finger lifts
 int pomoPageLastSecond = -1;
 bool pomoPageDirty = true;
 // Backlight alert state (phase-end notification)
@@ -292,6 +306,9 @@ bool homePageDirty = true;
 bool homePomoPressActive = false;
 unsigned long homePomoPressStart = 0;
 int homePomoPressX = 0;
+// Home clock circle: tap = open grid, hold 2.5s = touch calibration
+bool homeClockPressActive = false;
+unsigned long homeClockPressStart = 0;
 unsigned long homeTimeFreshAt = 0;
 unsigned long lastHomeInfoFetch = 0;
 bool clockAnalog = true;
@@ -313,6 +330,13 @@ void drawAllButtons();
 void showGridOrPage();
 void handleTouch();
 void touchSelfTest();
+void mapTouchRaw(const TS_Point& p, uint16_t& outX, uint16_t& outY);
+void loadTouchCal();
+void saveTouchCal();
+void openTouchCalPage();
+void drawTouchCalPage();
+void handleTouchCalTouch();
+void finishTouchCal();
 extern TS_Point touchPoint;
 extern bool touchDown;
 int8_t getTouchedButton(uint16_t x, uint16_t y);
@@ -391,7 +415,7 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n=================================");
     Serial.println("NexusDeck ESP32-2432S028 Firmware");
-    Serial.println("FW-BUILD: stable-touch-v2");
+    Serial.println("FW-BUILD: touch-cal-v3");
     Serial.println("=================================\n");
 
     // Pin scan runs before ANY peripheral claims pins (SD/TFT/touch).
@@ -410,6 +434,7 @@ void setup() {
 
     // Initialize touch
     setupTouch();
+    loadTouchCal();
 
     // Load saved server IP and background color
     loadSettings();
@@ -500,8 +525,7 @@ void loop() {
     }
 
     // Map touch coords once per frame (shared by gesture + handlers)
-    touchX = constrain(map(touchPoint.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
-    touchY = constrain(map(touchPoint.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    mapTouchRaw(touchPoint, touchX, touchY);
 
     // New touch starts / ends: reset swipe-back state on release
     if (touchDown) {
@@ -551,6 +575,7 @@ void loop() {
                 calDetail = -1;
                 musicPageActive = false;
                 spotPageActive = false;
+                touchCalPageActive = false;
                 pomoPageActive = false;
                 pomoPageIndex = -1;
                 openHomePage();
@@ -575,6 +600,19 @@ void loop() {
         }
     } else {
         portalHoldStart = 0;
+    }
+
+    // Home clock: tap = open grid, hold 2.5s = touch calibration
+    if (homeClockPressActive) {
+        if (!touchDown) {
+            homeClockPressActive = false;
+            if (homePageActive && millis() - homeClockPressStart < 2500) {
+                closeHomeToGrid();
+            }
+        } else if (millis() - homeClockPressStart > 2500) {
+            homeClockPressActive = false;
+            openTouchCalPage();
+        }
     }
 
     // Pomodoro press: release = tap (toggle/reset), hold 900ms = open dedicated page
@@ -611,6 +649,8 @@ void loop() {
         handleMusicTouch();
     } else if (spotPageActive) {
         handleSpotTouch();
+    } else if (touchCalPageActive) {
+        handleTouchCalTouch();
     } else {
         handleTouch();
     }
@@ -1152,13 +1192,142 @@ void touchSelfTest() {
                   (presses > 3 && spread > 50) ? "ALIVE" : "silent");
 }
 
+// ===== Touch calibration (per-unit, NVS-persisted) =====
+// Opened from the home page: hold the clock circle for 2.5 seconds.
+// Four crosshair targets (screen corners) are touched in order; the raw
+// readings at the corners define the linear raw->screen map, replacing
+// the old fixed 200..3700 / 240..3800 guess that pressed neighbour keys
+// on units whose resistive panel is slightly off.
+
+void mapTouchRaw(const TS_Point& p, uint16_t& outX, uint16_t& outY) {
+    // Linear raw->screen map from measured corner endpoints; panel
+    // inversion is handled automatically because both ends are measured,
+    // never assumed.
+    int32_t x = (int32_t)(p.x - calX0) * (SCREEN_WIDTH - 1) / (int32_t)(calX1 - calX0);
+    int32_t y = (int32_t)(p.y - calY0) * (SCREEN_HEIGHT - 1) / (int32_t)(calY1 - calY0);
+    outX = constrain(x, 0, SCREEN_WIDTH - 1);
+    outY = constrain(y, 0, SCREEN_HEIGHT - 1);
+}
+
+void loadTouchCal() {
+    preferences.begin("deck", true);
+    calX0 = preferences.getFloat("tc_x0", 200.0f);
+    calX1 = preferences.getFloat("tc_x1", 3700.0f);
+    calY0 = preferences.getFloat("tc_y0", 240.0f);
+    calY1 = preferences.getFloat("tc_y1", 3800.0f);
+    preferences.end();
+    // Insane stored values fall back to the legacy map
+    if (fabsf(calX1 - calX0) < 800) { calX0 = 200; calX1 = 3700; }
+    if (fabsf(calY1 - calY0) < 800) { calY0 = 240; calY1 = 3800; }
+    Serial.printf("Touch cal: x %.0f..%.0f  y %.0f..%.0f\n", calX0, calX1, calY0, calY1);
+}
+
+void saveTouchCal() {
+    preferences.begin("deck", false);
+    preferences.putFloat("tc_x0", calX0);
+    preferences.putFloat("tc_x1", calX1);
+    preferences.putFloat("tc_y0", calY0);
+    preferences.putFloat("tc_y1", calY1);
+    preferences.end();
+}
+
+// Landscape corner targets: TL, TR, BR, BL (inset 24px from each edge)
+const int16_t TCAL_TARGETS[4][2] = {{24, 24}, {295, 24}, {295, 215}, {24, 215}};
+
+void drawTouchCalPage() {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("TOUCH CALIBRATION", SCREEN_WIDTH / 2, 8, 2);
+    tft.setTextColor(TFT_SILVER, TFT_BLACK);
+    tft.drawString("Touch the centre of each cross", SCREEN_WIDTH / 2, 228, 2);
+    int16_t tx = TCAL_TARGETS[tcalTarget][0];
+    int16_t ty = TCAL_TARGETS[tcalTarget][1];
+    tft.drawCircle(tx, ty, 12, TFT_CYAN);
+    tft.drawLine(tx - 16, ty, tx + 16, ty, TFT_CYAN);
+    tft.drawLine(tx, ty - 16, tx, ty + 16, TFT_CYAN);
+    char step[8];
+    snprintf(step, sizeof(step), "%u/4", tcalTarget + 1);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawString(step, SCREEN_WIDTH / 2, 46, 2);
+}
+
+void openTouchCalPage() {
+    touchCalPageActive = true;
+    tcalTarget = 0;
+    tcalSumX = tcalSumY = 0;
+    tcalSamples = 0;
+    tcalReady = false; // opening finger is still down somewhere
+    drawTouchCalPage();
+    Serial.println("Touch calibration opened (home: hold clock 2.5s)");
+}
+
+void finishTouchCal() {
+    float x0 = (tcalRawX[0] + tcalRawX[3]) / 2.0f; // left corners
+    float x1 = (tcalRawX[1] + tcalRawX[2]) / 2.0f; // right corners
+    float y0 = (tcalRawY[0] + tcalRawY[1]) / 2.0f; // top corners
+    float y1 = (tcalRawY[2] + tcalRawY[3]) / 2.0f; // bottom corners
+    if (fabsf(x1 - x0) < 800 || fabsf(y1 - y0) < 800) {
+        Serial.println("Touch cal: spread too small, restarting");
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.drawString("Calibration failed", SCREEN_WIDTH / 2, 104, 2);
+        tft.setTextColor(TFT_SILVER, TFT_BLACK);
+        tft.drawString("Touch again more precisely", SCREEN_WIDTH / 2, 126, 2);
+        tcalTarget = 0;
+        tcalSamples = 0;
+        tcalSumX = tcalSumY = 0;
+        tcalReady = false;
+        delay(1500);
+        drawTouchCalPage();
+        return;
+    }
+    calX0 = x0; calX1 = x1; calY0 = y0; calY1 = y1;
+    saveTouchCal();
+    touchCalPageActive = false;
+    showGridOrPage();
+    drawStatusBar();
+    Serial.printf("Touch cal saved: x %.0f..%.0f  y %.0f..%.0f\n", calX0, calX1, calY0, calY1);
+}
+
+void handleTouchCalTouch() {
+    if (touchDown) {
+        if (!tcalReady) return; // ignore the press that opened the page
+        TS_Point p = touchPoint;
+        if (p.x >= 8000 || p.y >= 8000 || p.z == 0) return; // invalid frame
+        tcalSumX += p.x;
+        tcalSumY += p.y;
+        tcalSamples++;
+        return;
+    }
+    // Finger released
+    if (!tcalReady) {
+        tcalReady = true; // opening finger lifted -> arm the sampler
+        return;
+    }
+    if (tcalSamples < 3) return; // stray noise tap
+    tcalRawX[tcalTarget] = (int16_t)(tcalSumX / tcalSamples + 0.5f);
+    tcalRawY[tcalTarget] = (int16_t)(tcalSumY / tcalSamples + 0.5f);
+    Serial.printf("Touch cal target %u: raw=%d,%d\n",
+                  tcalTarget, tcalRawX[tcalTarget], tcalRawY[tcalTarget]);
+    tcalTarget++;
+    tcalSamples = 0;
+    tcalSumX = tcalSumY = 0;
+    if (tcalTarget < 4) {
+        drawTouchCalPage();
+        return;
+    }
+    finishTouchCal();
+}
+
 void handleTouch() {
     if (touchDown) {
         TS_Point p = touchPoint;
 
         // Map calibrated raw touch coordinates to the rotated landscape screen.
-        uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
-        uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+        uint16_t x, y;
+        mapTouchRaw(p, x, y);
 
         // Settle the point across consecutive frames before acting on it;
         // phantom spikes disappear by the second frame, fingers stay.
@@ -2110,7 +2279,7 @@ void pomoTapAction(uint8_t index) {
 
 // ===== Pomodoro Dedicated Page =====
 bool anyOverlayActive() {
-    return pomoPageActive || homePageActive || calPageActive || musicPageActive || spotPageActive;
+    return pomoPageActive || homePageActive || calPageActive || musicPageActive || spotPageActive || touchCalPageActive;
 }
 
 void openPomoPage(uint8_t index) {
@@ -2409,8 +2578,8 @@ void handleSpotTouch() {
     static unsigned long spotTouchDebounce = 0;
     if (millis() < spotTouchDebounce) return;
     TS_Point p = touch.getPoint();
-    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
-    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    uint16_t x, y;
+    mapTouchRaw(p, x, y);
     spotTouchDebounce = millis() + 150;
     ignoreTouchUntil = millis() + 250;
     if (y >= 150 && y <= 194) {
@@ -2619,8 +2788,8 @@ void handleMusicTouch() {
     static unsigned long musicTouchDebounce = 0;
     if (millis() < musicTouchDebounce) return;
     TS_Point p = touchPoint;
-    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
-    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    uint16_t x, y;
+    mapTouchRaw(p, x, y);
     musicTouchDebounce = millis() + 150;
     ignoreTouchUntil = millis() + 250;
     if (y >= 196) {
@@ -2670,7 +2839,8 @@ void handleCalTouch() {
     static unsigned long calTouchDebounce = 0;
     if (millis() < calTouchDebounce) return;
     TS_Point p = touchPoint;
-    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    uint16_t x, y;
+    mapTouchRaw(p, x, y);
     calTouchDebounce = millis() + 150;
     ignoreTouchUntil = millis() + 250;
     if (calDetail >= 0) {
@@ -2764,8 +2934,8 @@ void drawPomoPage() {
 void handlePomoPageTouch() {
     if (!touchDown) return;
     TS_Point p = touchPoint;
-    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
-    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    uint16_t x, y;
+    mapTouchRaw(p, x, y);
 
     static unsigned long pomoTouchDebounce = 0;
     if (millis() < pomoTouchDebounce) return;
@@ -3024,8 +3194,8 @@ void switchToHomeProfile(uint8_t slot) {
 void handleHomeTouch() {
     if (!touchDown) return;
     TS_Point p = touchPoint;
-    uint16_t x = constrain(map(p.x, 200, 3700, 0, SCREEN_WIDTH - 1), 0, SCREEN_WIDTH - 1);
-    uint16_t y = constrain(map(p.y, 240, 3800, 0, SCREEN_HEIGHT - 1), 0, SCREEN_HEIGHT - 1);
+    uint16_t x, y;
+    mapTouchRaw(p, x, y);
 
     static unsigned long homeTouchDebounce = 0;
     if (millis() < homeTouchDebounce) return;
@@ -3044,7 +3214,12 @@ void handleHomeTouch() {
         } else {
             int dx = (int)x - 160, dy = (int)y - 78;
             if (dx * dx + dy * dy <= 44 * 44) {
-                closeHomeToGrid(); // tap clock = open grid
+                // Tap-vs-hold resolved in loop(): tap opens the grid,
+                // holding 2.5s opens touch calibration
+                if (!homeClockPressActive) {
+                    homeClockPressActive = true;
+                    homeClockPressStart = millis();
+                }
             }
         }
         return;
