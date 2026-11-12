@@ -261,6 +261,9 @@ bool swipeDone = false;
 bool homeFetchPending = false; // fetch home data AFTER drawing (fast back)
 // Mapped touch coords for the current frame (shared by gesture + handlers)
 uint16_t touchX = 0, touchY = 0;
+// Moment of the last press/release: HTTP sync skips around it so touch
+// polling is never interrupted mid-press (it froze the loop for seconds).
+unsigned long lastTouchActivity = 0;
 
 // Ghost-touch filter: the CYD controller can emit a phantom frame (EMI /
 // floating sensor) that acts like a tap. A real finger is still down and
@@ -420,7 +423,7 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n=================================");
     Serial.println("NexusDeck ESP32-2432S028 Firmware");
-    Serial.println("FW-BUILD: touch-cal-v4");
+    Serial.println("FW-BUILD: touch-cal-v5-fastloop");
     Serial.println("=================================\n");
 
     // Pin scan runs before ANY peripheral claims pins (SD/TFT/touch).
@@ -525,7 +528,9 @@ void loop() {
     if (touch.tirqTouched() && touch.touched()) {
         touchPoint = touch.getPoint();
         touchDown = true;
+        lastTouchActivity = millis();
     } else {
+        if (touchDown) lastTouchActivity = millis(); // release moment
         touchDown = false;
     }
 
@@ -682,8 +687,11 @@ void loop() {
         }
     }
 
-    // Sync profile from server
-    if (wifiConnected && (currentTime - lastSyncTime > SYNC_INTERVAL)) {
+    // Sync profile from server. Never during/just-after a touch: the HTTP
+    // round-trip blocks touch polling, which felt like a laggy, misplaced
+    // deck. Back off to 10s when the server is unreachable.
+    if (wifiConnected && !touchDown && millis() - lastTouchActivity > 800 &&
+        (currentTime - lastSyncTime > (unsigned long)(serverAvailable ? SYNC_INTERVAL : 10000))) {
         syncProfile();
         lastSyncTime = currentTime;
     }
@@ -1894,8 +1902,14 @@ static void parseUpdateNotice(const String& payload) {
 // ===== WLED-style LED preset sync (cheap GET, once per sync cycle) =====
 void ledSyncPresets() {
     if (!wifiConnected) return;
+    // Throttled: this rides on the 3s sync cycle, but the preset list and
+    // update notice change rarely — a 5s-timeout GET every 3s froze the
+    // loop and made the deck feel laggy.
+    static unsigned long lastLedSync = 0;
+    if (millis() - lastLedSync < 45000) return;
+    lastLedSync = millis();
     HTTPClient presetsHttp;
-    presetsHttp.setTimeout(5000);
+    presetsHttp.setTimeout(1500);
     espHttpBegin(presetsHttp, String(SERVER_URL) + "/api/led-presets");
     int code = presetsHttp.GET();
     if (code == 200) {
@@ -1915,7 +1929,7 @@ void syncProfile() {
 
     String url = String(SERVER_URL) + "/api/health";
 
-    http.setTimeout(8000);
+    http.setTimeout(1500);
     espHttpBegin(http, url);
     int httpCode = http.GET();
 
@@ -1933,6 +1947,7 @@ void syncProfile() {
         // Get profile data
         http.end();
         espHttpBegin(http, String(SERVER_URL) + "/api/get-profile");
+        http.setTimeout(3000);
         httpCode = http.GET();
 
         if (httpCode == 200) {
