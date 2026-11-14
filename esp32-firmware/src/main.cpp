@@ -250,6 +250,17 @@ int8_t pomoPressCandidate = -1;
 unsigned long pomoPressStart = 0;
 // Tap-vs-swipe state (grid): tap executes on release, right-edge swipe goes back
 int8_t pendingButton = -1;
+// Release hysteresis: a faulty panel can drop contact for a frame or two
+// mid-press (pressure dip). Without hysteresis each dip looks like a lift +
+// a brand-new touch, so ONE physical press fired several buttons in a row
+// (Gmail -> Excel). Require this many steady "not touched" frames before
+// the contact really ends.
+const uint8_t RELEASE_FRAMES = 4;
+uint8_t releaseFrames = 0;
+// One action per touch: the resistive panel drifts a few px during a press
+// (Gmail->Calendar->Excel fired from ONE contact). Once a button fires for
+// this contact, no other button may fire until the finger lifts.
+bool touchContactFired = false;
 int16_t gestureStartX = -1, gestureStartY = -1;
 bool gestureFired = false;
 // Ignore touches briefly after opening a page (finger may still be down)
@@ -264,6 +275,17 @@ uint16_t touchX = 0, touchY = 0;
 // Moment of the last press/release: HTTP sync skips around it so touch
 // polling is never interrupted mid-press (it froze the loop for seconds).
 unsigned long lastTouchActivity = 0;
+
+// Stuck-touch guard state: a damaged/floating resistive panel (loose
+// ribbon, pressure point) can report a PERMANENT contact at one spot.
+// Every real tap then ends by re-engaging the phantom spot, which
+// re-presses the same wrong button ("Gmail opens Calendar"). Once a spot
+// is confirmed stuck (5s of motionless contact) it becomes a dead zone.
+unsigned long touchStartAt = 0;
+int16_t touchStartRawX = -1, touchStartRawY = -1;
+bool stuckLearned = false;
+int16_t stuckAX = 0, stuckAY = 0;
+const int16_t STUCK_RADIUS = 250; // raw counts around the learned spot
 
 // Ghost-touch filter: the CYD controller can emit a phantom frame (EMI /
 // floating sensor) that acts like a tap. A real finger is still down and
@@ -420,7 +442,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-cal-v6";
+const char* FW_TAG = "touch-cal-v9-release-hyst";
 
 // ===== Setup =====
 void setup() {
@@ -519,6 +541,26 @@ void setup() {
     Serial.println("Setup complete!");
 }
 
+// Cancel everything a phantom/stuck contact may have armed: the pending
+// tap, press candidates, active holds and the pressed-button highlight.
+void cancelStuckPress() {
+    pendingButton = -1;
+    pomoPressCandidate = -1;
+    homeClockPressActive = false;
+    homePomoPressActive = false;
+    swipeStartX = -1;
+    swipeDone = false;
+    gestureStartX = -1;
+    gestureFired = false;
+    touchContactFired = false;
+    touchDebounceUntil = millis() + 300;
+    if (lastPressedButton >= 0) {
+        setButtonState(lastPressedButton, 0);
+        drawButton(lastPressedButton);
+        lastPressedButton = -1;
+    }
+}
+
 void loop() {
     // Backlight phase-end alert blinking (non-blocking)
     updateBacklight();
@@ -531,11 +573,59 @@ void loop() {
     // SD stays disabled (ENABLE_SD 0) so nothing ever remaps the bus.
     if (touch.tirqTouched() && touch.touched()) {
         touchPoint = touch.getPoint();
-        touchDown = true;
-        lastTouchActivity = millis();
+        releaseFrames = 0;
+        if (!touchDown) {
+            // New contact begins: remember where and when it started
+            touchStartAt = millis();
+            touchStartRawX = touchPoint.x;
+            touchStartRawY = touchPoint.y;
+        }
+        // Stuck-touch guard: a damaged/floating resistive panel can hold one
+        // spot permanently "touched". A contact resting motionless for >5s
+        // (or starting inside an already-learned dead zone) is the phantom:
+        // it is ignored entirely so it can never press a button, wake the
+        // screen or stall the sync loop.
+        bool deadSpot = stuckLearned &&
+                        abs(touchPoint.x - stuckAX) < STUCK_RADIUS &&
+                        abs(touchPoint.y - stuckAY) < STUCK_RADIUS;
+        if (!deadSpot && touchStartRawX >= 0 &&
+            millis() - touchStartAt > 5000 &&
+            abs(touchPoint.x - touchStartRawX) < STUCK_RADIUS &&
+            abs(touchPoint.y - touchStartRawY) < STUCK_RADIUS) {
+            // Learn (or re-learn): any contact holding still for >5s is the
+            // phantom. Re-learning lets the zone follow the spot if it drifts
+            // (a bad boot reading must not poison the anchor forever).
+            bool moved = stuckLearned;
+            stuckLearned = true;
+            stuckAX = touchPoint.x;
+            stuckAY = touchPoint.y;
+            Serial.printf("Stuck touch learned at raw=%d,%d -> dead zone%s\n",
+                          stuckAX, stuckAY, moved ? " (moved)" : "");
+            deadSpot = true;
+        }
+        if (deadSpot) {
+            if (touchDown) { // live contact turning phantom: cancel what it armed
+                touchDown = false;
+                touchStartRawX = -1;
+                cancelStuckPress();
+            }
+        } else {
+            touchDown = true;
+            lastTouchActivity = millis();
+        }
     } else {
-        if (touchDown) lastTouchActivity = millis(); // release moment
-        touchDown = false;
+        // Release hysteresis: only a STEADY absence of contact ends it.
+        // A 1-2 frame dip mid-press is a panel glitch, not a lift.
+        if (touchDown && releaseFrames < RELEASE_FRAMES) {
+            releaseFrames++;
+            // touchDown stays true through the dip; touchPoint keeps the
+            // last real reading, so handlers see a stable position.
+        } else {
+            if (touchDown) lastTouchActivity = millis(); // release moment
+            touchDown = false;
+            touchStartRawX = -1;
+            releaseFrames = 0;
+        }
     }
 
     // Map touch coords once per frame (shared by gesture + handlers)
@@ -1528,13 +1618,16 @@ void handleTouch() {
             return;
         }
 
-        if (buttonIndex >= 0 && buttonIndex != lastPressedButton &&
+        if (buttonIndex >= 0 && !touchContactFired &&
+            buttonIndex != lastPressedButton &&
             millis() >= touchDebounceUntil) {
             lastPressedButton = buttonIndex;
+            touchContactFired = true; // drift now can only cancel, never re-fire
             touchDebounceUntil = millis() + 280;
 
-            Serial.print("Button pressed: ");
-            Serial.println(buttonIndex);
+            Serial.printf("Press idx=%d \"%s\" at screen=%u,%u raw=%d,%d\n",
+                          buttonIndex, buttons[buttonIndex].label.c_str(),
+                          x, y, p.x, p.y);
 
             // Pomodoro buttons: defer action until release (tap) or hold (open page)
             if (buttons[buttonIndex].hasWidget && buttons[buttonIndex].widgetType == "pomodoro") {
@@ -1568,6 +1661,7 @@ void handleTouch() {
         gestureStartX = -1;
         gestureFired = false;
         lastPressedButton = -1;
+        touchContactFired = false; // next touch may fire a button again
     }
 }
 
