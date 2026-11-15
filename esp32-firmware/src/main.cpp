@@ -36,7 +36,7 @@
 // ===== Configuration & Settings =====
 Preferences preferences;
 String serverIP = "";
-String bgColorHex = "#1a1a2e";
+String bgColorHex = "#0d0f14";
 bool bgColorCustom = false;
 String apiToken = "";
 // MP3 player state (used by loop() and loadSettings())
@@ -86,10 +86,10 @@ DHT dht(DHT_PIN, DHT_TYPE);
 void loadSettings() {
     preferences.begin("deck", false);
     serverIP = preferences.getString("srv_ip", "");
-    bgColorHex = preferences.getString("bg_color", "#1a1a2e");
+    bgColorHex = preferences.getString("bg_color", "#0d0f14");
     bgColorHex.trim();
     if (bgColorHex.length() == 0) {
-        bgColorHex = "#1a1a2e";
+        bgColorHex = "#0d0f14";
     }
     bgColorCustom = preferences.getBool("bg_custom", false);
     apiToken = preferences.getString("api_token", "");
@@ -142,13 +142,21 @@ const int SYNC_INTERVAL = 3000; // Sync every 3 seconds to reduce display/power 
 // Display Configuration
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
-#define BUTTON_PADDING 4
-#define TFT_DARK_BG 0x18C5 // #1a1a2e
+#define BUTTON_PADDING 6
+#define TFT_DARK_BG 0x18C5 // #1a1a2e (legacy default, kept for NVS fallback)
 
 // Status bar + button grid layout
 #define STATUS_BAR_HEIGHT 18
 #define GRID_Y_OFFSET STATUS_BAR_HEIGHT
 #define GRID_HEIGHT (SCREEN_HEIGHT - STATUS_BAR_HEIGHT)
+
+// UI palette — modern dark theme (cards float on a near-black background,
+// each button's configured color becomes an accent, not a full fill)
+#define UI_BG      0x0862 // #0d0f14 near-black
+#define UI_CARD    0x1906 // #1c2030 dark card
+#define UI_CARD_HI 0x2126 // #232a3f hovered/lit card
+#define UI_BORDER  0x2988 // #2b3145 subtle card border
+#define UI_TEXT    0xE73C // #e8eaf0 soft white
 
 // Calculate button dimensions (grid sits below the status bar)
 #define BUTTON_WIDTH ((SCREEN_WIDTH - (BUTTON_PADDING * (GRID_COLS + 1))) / GRID_COLS)
@@ -442,7 +450,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-cal-v9-release-hyst";
+const char* FW_TAG = "ui-v10-modern";
 
 // ===== Setup =====
 void setup() {
@@ -898,11 +906,11 @@ void setupDisplay() {
     // Show splash screen (with the build tag — tells the flashed version
     // just by watching the device at power-up)
     tft.fillScreen(deckBackgroundColor);
-    tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
     tft.setTextDatum(MC_DATUM);
     tft.drawString("NexusDeck CYD", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 30, 4);
     tft.drawString("Initializing...", SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 16, 2);
-    tft.setTextColor(TFT_CYAN, TFT_DARK_BG);
+    tft.setTextColor(TFT_CYAN, deckBackgroundColor);
     tft.drawString(FW_TAG, SCREEN_WIDTH/2, SCREEN_HEIGHT/2 + 42, 2);
     delay(2500);
 
@@ -1151,9 +1159,9 @@ void setupWiFi() {
 
     tft.fillScreen(deckBackgroundColor);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_GREEN, TFT_DARK_BG);
+    tft.setTextColor(TFT_GREEN, deckBackgroundColor);
     tft.drawString("WiFi Connected!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20, 4);
-    tft.setTextColor(TFT_WHITE, TFT_DARK_BG);
+    tft.setTextColor(TFT_WHITE, deckBackgroundColor);
     tft.drawString("Server: " + serverIP, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 20, 2);
     delay(1500);
 
@@ -1174,30 +1182,26 @@ void drawButton(uint8_t index) {
 
     Button& btn = buttons[index];
 
-    // Draw button background based on state
-    uint16_t bgColor = btn.color;
+    // Modern card look: dark card + subtle border; the button's own color
+    // is an ACCENT (bottom bar + icon tint) instead of a full fill.
+    uint16_t cardBg = UI_CARD;
+    uint16_t borderCol = UI_BORDER;
+    uint16_t accent = btn.color;
+    bool filled = false; // pressed state: whole card lights up in the accent
 
-    if (btn.state == 1) { // Pressed
-        bgColor = tft.color565(
-            (((bgColor >> 11) & 0x1F) * 0.7),
-            (((bgColor >> 5) & 0x3F) * 0.7),
-            ((bgColor & 0x1F) * 0.7)
-        );
+    if (btn.state == 1) { // Pressed: card fills with the accent (tactile flash)
+        cardBg = accent;
+        borderCol = TFT_WHITE;
+        filled = true;
     } else if (btn.state == 2) { // Running
-        bgColor = tft.color565(30, 90, 180);
+        borderCol = TFT_CYAN;
+        accent = TFT_CYAN;
     } else if (btn.state == 3) { // Success
-        bgColor = TFT_GREEN;
+        borderCol = TFT_GREEN;
+        accent = TFT_GREEN;
     } else if (btn.state == 4) { // Error
-        bgColor = TFT_RED;
-    }
-
-    uint16_t borderColor = TFT_WHITE;
-    if (btn.state == 2) {
-        borderColor = TFT_CYAN;
-    } else if (btn.state == 3) {
-        borderColor = TFT_GREEN;
-    } else if (btn.state == 4) {
-        borderColor = TFT_RED;
+        borderCol = TFT_RED;
+        accent = TFT_RED;
     }
 
     // One reusable sprite for every button redraw: creating/freeing a 10KB
@@ -1210,10 +1214,13 @@ void drawButton(uint8_t index) {
     }
     if (!btnSpriteReady) {
         // Low-memory fallback: draw straight on the TFT (slight flicker).
-        tft.fillRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, bgColor);
-        tft.drawRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 6, borderColor);
+        tft.fillRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 8, cardBg);
+        tft.drawRoundRect(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, 8, borderCol);
+        if (!filled) {
+            tft.fillRoundRect(x + 8, y + BUTTON_HEIGHT - 9, BUTTON_WIDTH - 16, 5, 2, accent);
+        }
         if (btn.label.length() > 0) {
-            tft.setTextColor(TFT_WHITE, bgColor);
+            tft.setTextColor(TFT_WHITE, cardBg);
             tft.setTextDatum(MC_DATUM);
             int fallbackY = (btn.icon.length() > 0) ? ((BUTTON_HEIGHT * 2) / 3) : (BUTTON_HEIGHT / 2);
             tft.drawString(truncateText(btn.label, 10), x + BUTTON_WIDTH / 2, y + fallbackY, 2);
@@ -1222,21 +1229,28 @@ void drawButton(uint8_t index) {
     }
     TFT_eSprite& sprite = btnSprite;
     sprite.fillSprite(deckBackgroundColor);
-    sprite.fillRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 6, bgColor);
-    sprite.drawRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 6, borderColor);
+    sprite.fillRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 8, cardBg);
+    sprite.drawRoundRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 8, borderCol);
+    // Accent pill at the bottom of the card (hidden while pressed: the
+    // whole card is the accent then)
+    if (!filled) {
+        sprite.fillRoundRect(10, BUTTON_HEIGHT - 9, BUTTON_WIDTH - 20, 5, 2, accent);
+    }
 
-    // Draw icon as a real shape when known, otherwise as text
+    // Draw icon as a real shape when known, otherwise as text (icon is
+    // tinted with the accent for cohesion; white when the card is filled)
+    uint16_t iconColor = filled ? TFT_WHITE : accent;
     if (btn.icon.length() > 0) {
-        if (!drawIconShape(sprite, btn.icon, BUTTON_WIDTH / 2, BUTTON_HEIGHT / 3, TFT_WHITE, bgColor)) {
-            sprite.setTextColor(TFT_WHITE, bgColor);
+        if (!drawIconShape(sprite, btn.icon, BUTTON_WIDTH / 2, (BUTTON_HEIGHT / 2) - 6, iconColor, cardBg)) {
+            sprite.setTextColor(iconColor, cardBg);
             sprite.setTextDatum(MC_DATUM);
-            sprite.drawString(truncateText(displayIcon(btn.icon), 8), BUTTON_WIDTH / 2, BUTTON_HEIGHT / 3, 2);
+            sprite.drawString(truncateText(displayIcon(btn.icon), 8), BUTTON_WIDTH / 2, (BUTTON_HEIGHT / 2) - 6, 2);
         }
     }
 
     // Draw label
     if (btn.label.length() > 0) {
-        sprite.setTextColor(TFT_WHITE, bgColor);
+        sprite.setTextColor(TFT_WHITE, cardBg);
         sprite.setTextDatum(MC_DATUM);
         int labelY = (btn.icon.length() > 0) ? ((BUTTON_HEIGHT * 2) / 3) : (BUTTON_HEIGHT / 2);
         sprite.drawString(truncateText(btn.label, 10), BUTTON_WIDTH / 2, labelY, 2);
@@ -3335,11 +3349,13 @@ String homeShortName(uint8_t slot) {
 }
 
 void drawHomeProfileButton(int x, int y, int w, int h, const String& label) {
-    tft.fillRoundRect(x, y, w, h, 8, tft.color565(40, 40, 60));
-    tft.drawRoundRect(x, y, w, h, 8, TFT_WHITE);
+    tft.fillRoundRect(x, y, w, h, 8, UI_CARD);
+    tft.drawRoundRect(x, y, w, h, 8, UI_BORDER);
+    // Cyan accent pill — matches the grid card language
+    tft.fillRoundRect(x + 8, y + h - 9, w - 16, 5, 2, TFT_CYAN);
     tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_WHITE, tft.color565(40, 40, 60));
-    tft.drawString(label, x + w / 2, y + h / 2, 2);
+    tft.setTextColor(TFT_WHITE, UI_CARD);
+    tft.drawString(label, x + w / 2, y + h / 2 - 3, 2);
 }
 
 void updateHomeClock() {
@@ -3367,7 +3383,7 @@ void drawHomePage() {
     drawHomeProfileButton(8, 40, 64, 76, homeShortName(2));
     drawHomeProfileButton(248, 40, 64, 76, homeShortName(0));
     tft.drawCircle(160, 78, 42, TFT_WHITE);
-    tft.drawCircle(160, 78, 39, TFT_DARKGREY);
+    tft.drawCircle(160, 78, 39, UI_BORDER);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, deckBackgroundColor);
     tft.drawString(homeClockHM(), 160, 74, 4);
@@ -3397,9 +3413,11 @@ void pomoAdjustMinutes(int deltaMin) {
 void updateHomePomoButton() {
     // Partial redraw of the home pomodoro button only, no icon:
     // [-] zone | live MM:SS countdown + phase line | [+] zone
-    const uint16_t bg = tft.color565(90, 30, 30);
+    const uint16_t bg = UI_CARD;
     tft.fillRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, bg);
-    tft.drawRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, TFT_WHITE);
+    uint16_t ring = homePomo.timerRunning ? TFT_GREEN
+                  : (homePomo.pomoAlert ? TFT_YELLOW : UI_BORDER);
+    tft.drawRoundRect(HOME_POMO_X, HOME_POMO_Y, HOME_POMO_W, HOME_POMO_H, 8, ring);
     int cx = HOME_POMO_X + HOME_POMO_W / 2, cy = HOME_POMO_Y + HOME_POMO_H / 2;
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_LIGHTGREY, bg);
@@ -3991,7 +4009,8 @@ void drawStatusBar() {
     statusBarDrawn = true;
 
     tft.fillRect(0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT, deckBackgroundColor);
-    tft.drawFastHLine(0, STATUS_BAR_HEIGHT - 1, SCREEN_WIDTH, deckBackgroundColor);
+    // Hairline separator under the status strip
+    tft.drawFastHLine(0, STATUS_BAR_HEIGHT - 1, SCREEN_WIDTH, UI_BORDER);
 
     uint16_t wifiColor = wifiConnected ? TFT_GREEN : TFT_RED;
     uint16_t serverColor = serverAvailable ? TFT_GREEN : (wifiConnected ? TFT_YELLOW : deckBackgroundColor);
@@ -4006,7 +4025,8 @@ void drawStatusBar() {
     // Visible HOME back button (tap anywhere on the status bar = home page)
     const int homeBtnW = 46;
     const int homeBtnX = SCREEN_WIDTH - 4 - homeBtnW;
-    tft.drawRoundRect(homeBtnX, 1, homeBtnW, STATUS_BAR_HEIGHT - 2, 4, TFT_CYAN);
+    tft.fillRoundRect(homeBtnX, 1, homeBtnW, STATUS_BAR_HEIGHT - 3, 7, UI_CARD);
+    tft.drawRoundRect(homeBtnX, 1, homeBtnW, STATUS_BAR_HEIGHT - 3, 7, TFT_CYAN);
     tft.setTextDatum(MR_DATUM);
     tft.setTextColor(TFT_CYAN, deckBackgroundColor);
     tft.drawString("< HOME", SCREEN_WIDTH - 6, STATUS_BAR_HEIGHT / 2 + 1, 1);
