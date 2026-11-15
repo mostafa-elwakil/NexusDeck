@@ -281,11 +281,12 @@ unsigned long ignoreTouchUntil = 0;
 int16_t swipeStartX = -1, swipeStartY = 0;
 bool swipeDone = false;
 bool homeFetchPending = false; // fetch home data AFTER drawing (fast back)
-// Z-pressure floor: this unit's stuck phantom reports z≈400-500 (and its
-// drift transitions up to ~1000) while real finger presses read z≈2000-3100.
-// Anything below Z_MIN is not a finger — this blocks the phantom at ANY
-// position it drifts to, with no dead zones and no position chasing.
-const int16_t Z_MIN = 1100;
+// Z-pressure floor: this unit's stuck phantom reads z≈400-520 in most
+// sessions but has been measured as high as 632 — it DRIFTS over time. Real
+// finger presses measured ≥1015 (typically 1700-3100). Z_MIN sits in the
+// gap: high enough that the phantom can never pass even on its worst day,
+// low enough that even a light real press gets through.
+const int16_t Z_MIN = 800;
 
 // Mapped touch coords for the current frame (shared by gesture + handlers)
 uint16_t touchX = 0, touchY = 0;
@@ -293,16 +294,10 @@ uint16_t touchX = 0, touchY = 0;
 // polling is never interrupted mid-press (it froze the loop for seconds).
 unsigned long lastTouchActivity = 0;
 
-// Stuck-touch guard state: a damaged/floating resistive panel (loose
-// ribbon, pressure point) can report a PERMANENT contact at one spot.
-// Every real tap then ends by re-engaging the phantom spot, which
-// re-presses the same wrong button ("Gmail opens Calendar"). Once a spot
-// is confirmed stuck (5s of motionless contact) it becomes a dead zone.
+// (v16: the stuck phantom is blocked purely by the z-pressure floor; no
+// position-based dead zones exist — they blocked real buttons in v13.)
 unsigned long touchStartAt = 0;
 int16_t touchStartRawX = -1, touchStartRawY = -1;
-bool stuckLearned = false;
-int16_t stuckAX = 0, stuckAY = 0;
-const int16_t STUCK_RADIUS = 250; // raw counts around the learned spot
 
 // Ghost-touch filter: the CYD controller can emit a phantom frame (EMI /
 // floating sensor) that acts like a tap. A real finger is still down and
@@ -326,6 +321,11 @@ bool touchCalPageActive = false;
 uint8_t tcalTarget = 0;           // 0..3 crosshair index
 float tcalSumX = 0, tcalSumY = 0;
 uint16_t tcalSamples = 0;
+// Per-tap raw samples (z-filtered) — the corner value is their MEDIAN, so a
+// few stray frames can't poison it (averaging did: phantom frames slipped
+// above the z floor and every attempt ended "implausible — tap again").
+#define TCAL_MAX_SAMPLES 32
+int16_t tcalSampX[TCAL_MAX_SAMPLES], tcalSampY[TCAL_MAX_SAMPLES];
 int16_t tcalRawX[4], tcalRawY[4];
 bool tcalReady = false;           // armed after the opening finger lifts
 // Verification screen after saving: dot must follow the finger exactly
@@ -353,6 +353,7 @@ bool homePageDirty = true;
 bool homePomoPressActive = false;
 unsigned long homePomoPressStart = 0;
 int homePomoPressX = 0;
+int homePomoPressY = 0;
 // Home clock circle: tap = open grid, hold 2.5s = touch calibration
 bool homeClockPressActive = false;
 unsigned long homeClockPressStart = 0;
@@ -459,7 +460,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-v14-zfilter";
+const char* FW_TAG = "touch-v16d-homefix";
 
 // ===== Setup =====
 void setup() {
@@ -569,6 +570,18 @@ static int16_t median5(int16_t* v) {
     return v[2];
 }
 
+// Median of n samples (n <= 32), insertion sort in place. Robust corner
+// estimator for touch calibration.
+static int16_t medianN(int16_t* v, uint8_t n) {
+    for (uint8_t i = 1; i < n; i++) {
+        int16_t k = v[i];
+        int8_t j = i - 1;
+        while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; }
+        v[j + 1] = k;
+    }
+    return v[n / 2];
+}
+
 // Cancel everything a phantom/stuck contact may have armed: the pending
 // tap, press candidates, active holds and the pressed-button highlight.
 void cancelStuckPress() {
@@ -621,7 +634,7 @@ void loop() {
 
         // Z-pressure floor: anything softer than a real finger is not a
         // touch at all. This is what neutralizes the stuck phantom for
-        // good — it reads z≈400-500 wherever it drifts, real presses
+        // good — it reads z≈400-520 wherever it drifts, real presses
         // read z≈2000+. Low-z frames skip ALL contact handling.
         if (touchPoint.z < Z_MIN) {
             if (touchDown) {
@@ -636,40 +649,34 @@ void loop() {
                                   touchPoint.x, touchPoint.y, touchPoint.z);
                     lastLowZLog = millis();
                 }
+                // Diagnostics: a REAL press that reads below the floor would
+                // move its position frame to frame; the resting phantom does
+                // not. Log soft frames whose position jumps — that is the
+                // signal for lowering Z_MIN based on data, not guesses.
+                static int16_t softLastX = -1, softLastY = -1;
+                if (softLastX >= 0 &&
+                    (abs(touchPoint.x - softLastX) > 150 ||
+                     abs(touchPoint.y - softLastY) > 150)) {
+                    Serial.printf("Soft press moved raw=%d,%d z=%d (was %d,%d)\n",
+                                  touchPoint.x, touchPoint.y, touchPoint.z,
+                                  softLastX, softLastY);
+                }
+                softLastX = touchPoint.x;
+                softLastY = touchPoint.y;
             }
         } else {
+            // Contact accepted as real. No dead zones, no position-based
+            // blocking: every position is trustworthy as long as z is high
+            // (v13 proved dead zones land on real buttons; the z filter is
+            // the only guard the phantom needs).
             if (!touchDown) {
                 // New contact begins: remember where and when it started
                 touchStartAt = millis();
                 touchStartRawX = touchPoint.x;
                 touchStartRawY = touchPoint.y;
             }
-            // Stuck-touch guard (kept as a fallback): a phantom state that
-            // somehow passes the z floor and rests >5s becomes a dead zone.
-            bool deadSpot = stuckLearned &&
-                            abs(touchPoint.x - stuckAX) < STUCK_RADIUS &&
-                            abs(touchPoint.y - stuckAY) < STUCK_RADIUS;
-            if (!deadSpot && touchDown && touchPoint.z < Z_MIN &&
-                millis() - touchStartAt > 5000) {
-                // Unreachable while the z-filter routes soft contacts away,
-                // but kept so a REAL press (z high) can NEVER be dead-zoned.
-                stuckLearned = true;
-                stuckAX = touchPoint.x;
-                stuckAY = touchPoint.y;
-                Serial.printf("Stuck touch learned at raw=%d,%d z=%d -> dead zone\n",
-                              stuckAX, stuckAY, touchPoint.z);
-                deadSpot = true;
-            }
-            if (deadSpot) {
-                if (touchDown) { // live contact turning phantom: cancel what it armed
-                    touchDown = false;
-                    touchStartRawX = -1;
-                    cancelStuckPress();
-                }
-            } else {
-                touchDown = true;
-                lastTouchActivity = millis();
-            }
+            touchDown = true;
+            lastTouchActivity = millis();
         }
     } else {
         // Release hysteresis (time-based): only a STEADY absence of contact
@@ -766,11 +773,15 @@ void loop() {
         portalHoldStart = 0;
     }
 
-    // Home clock: tap = open grid, hold 2.5s = touch calibration
+    // Home clock: tap = open grid, hold 2.5s = touch calibration.
+    // Guarded by homePageActive: an armed clock press must never fire after
+    // the page changed under it.
     if (homeClockPressActive) {
-        if (!touchDown) {
+        if (!homePageActive) {
             homeClockPressActive = false;
-            if (homePageActive && millis() - homeClockPressStart < 2500) {
+        } else if (!touchDown) {
+            homeClockPressActive = false;
+            if (millis() - homeClockPressStart < 2500) {
                 closeHomeToGrid();
             }
         } else if (millis() - homeClockPressStart > 2500) {
@@ -781,17 +792,24 @@ void loop() {
 
     // Home profile buttons: deferred execution on release — a phantom
     // contact never genuinely releases, so it can never switch profiles.
+    // Only valid while the home page is still on screen.
     if (pendingHomeProfile >= 0) {
-        if (!touchDown) {
+        if (!homePageActive) {
+            pendingHomeProfile = -1;
+        } else if (!touchDown) {
             uint8_t slot = (uint8_t)pendingHomeProfile;
             pendingHomeProfile = -1;
             switchToHomeProfile(slot);
         }
     }
 
-    // Pomodoro press: release = tap (toggle/reset), hold 900ms = open dedicated page
+    // Pomodoro grid button: release = tap (toggle/reset), hold = open page.
+    // Dropped if the page changed under the press (swipe/home opened).
     if (pomoPressCandidate >= 0) {
-        if (!touchDown) {
+        if (homePageActive || pomoPageActive) {
+            setButtonState(pomoPressCandidate, 0);
+            pomoPressCandidate = -1;
+        } else if (!touchDown) {
             uint8_t idx = pomoPressCandidate;
             pomoPressCandidate = -1;
             pomoTapAction(idx);
@@ -911,9 +929,14 @@ void loop() {
             updateHomePomoButton();
         }
         // Home pomodoro press resolution: release = -/+1 min or
-        // start-pause (double-tap = reset), hold 900ms = full page
+        // start-pause (double-tap = reset), hold 1500ms = full page.
+        // MUST use the filtered touchDown, NOT raw touch.touched(): the raw
+        // signal stays high forever (phantom), which made the release branch
+        // unreachable and the hold branch fire on EVERY press-carry-over.
+        // The hold also requires the finger to STAY on the pill: drifting
+        // away cancels it (a sliding finger is not a hold).
         if (homePomoPressActive) {
-            if (!touch.touched()) {
+            if (!touchDown) {
                 homePomoPressActive = false;
                 int px = homePomoPressX;
                 unsigned long now = millis();
@@ -930,7 +953,10 @@ void loop() {
                     pomoToggleRunBtn(homePomo);
                 }
                 updateHomePomoButton();
-            } else if (millis() - homePomoPressStart > 900) {
+            } else if (abs((int)touchX - homePomoPressX) > 25 ||
+                       abs((int)touchY - homePomoPressY) > 25) {
+                homePomoPressActive = false; // slid off the pill: not a hold
+            } else if (millis() - homePomoPressStart > 1500) {
                 homePomoPressActive = false;
                 pomoReturnHome = true;
                 openPomoPage(255);
@@ -1400,7 +1426,7 @@ void mapTouchRaw(const TS_Point& p, uint16_t& outX, uint16_t& outY) {
 // Bump when the calibration storage layout/validity changes: old (or
 // garbage) stored values are ignored and defaults are used until the user
 // recalibrates. v3 wipes the broken cal saved on units with scatter.
-#define TCAL_VER 3
+#define TCAL_VER 5
 
 void loadTouchCal() {
     preferences.begin("deck", true);
@@ -1654,8 +1680,13 @@ void handleTouchCalTouch() {
         if (!tcalReady) return; // ignore the press that opened the page
         TS_Point p = touchPoint;
         if (p.x >= 8000 || p.y >= 8000 || p.z == 0) return; // invalid frame
-        tcalSumX += p.x;
-        tcalSumY += p.y;
+        // Only real finger frames are sampled. The stuck phantom reads
+        // z<=640, drift spikes a few hundred counts more — neither may
+        // enter a corner sample (this is what made calibration impossible).
+        if (p.z < Z_MIN) return;
+        if (tcalSamples >= TCAL_MAX_SAMPLES) return; // keep the first frames
+        tcalSampX[tcalSamples] = p.x;
+        tcalSampY[tcalSamples] = p.y;
         tcalSamples++;
         return;
     }
@@ -1664,19 +1695,23 @@ void handleTouchCalTouch() {
         tcalReady = true; // opening finger lifted -> arm the sampler
         return;
     }
-    if (tcalSamples < 3) return; // stray noise tap
-    int16_t ax = (int16_t)(tcalSumX / tcalSamples + 0.5f);
-    int16_t ay = (int16_t)(tcalSumY / tcalSamples + 0.5f);
-    // Plausibility gate: the corner must sit in the right QUADRANT of the
-    // raw space (wide +-1200 bounds vs the default map). A phantom-blend or
-    // scattered tap can never poison the calibration with insane values
-    // again (this unit once saved x 1580..3524 and every press mapped wrong).
+    if (tcalSamples < 3) { // stray noise tap
+        tcalSamples = 0;
+        return;
+    }
+    // MEDIAN, not mean: a couple of outlier frames cannot move the corner.
+    int16_t ax = medianN(tcalSampX, tcalSamples);
+    int16_t ay = medianN(tcalSampY, tcalSamples);
+    // Plausibility gate: each corner must sit in the right QUADRANT of the
+    // raw space. Bounds come from this unit's measurements (left edge reads
+    // ~700-1000, right ~3400-3600, top ~1200, bottom ~3300), loose enough
+    // to accept a real corner tap, tight enough to reject quadrant mixes.
     bool ok = false;
     switch (tcalTarget) {
-        case 0: ok = (ax < 1400 && ay < 1440); break; // top-left
-        case 1: ok = (ax > 2300 && ay < 1440); break; // top-right
-        case 2: ok = (ax > 2300 && ay > 2560); break; // bottom-right
-        case 3: ok = (ax < 1400 && ay > 2560); break; // bottom-left
+        case 0: ok = (ax < 1100 && ay < 2000); break; // top-left
+        case 1: ok = (ax > 2700 && ay < 2000); break; // top-right
+        case 2: ok = (ax > 2700 && ay > 2300); break; // bottom-right
+        case 3: ok = (ax < 1100 && ay > 2300); break;  // bottom-left
     }
     if (!ok) {
         Serial.printf("Touch cal target %u implausible raw=%d,%d — tap again\n",
@@ -1803,10 +1838,10 @@ void handleTouch() {
 }
 
 int8_t getTouchedButton(uint16_t x, uint16_t y) {
-    // 6px firing margin: the panel scatters the same physical spot by up to
-    // ~8mm, and cells are separated by only ~1.3mm. A press must be well
-    // INSIDE a cell to fire it — edge grazing never fires the neighbour.
-    const int16_t M = 6;
+    // 4px firing margin (v16: was 6px — with the z-filter the phantom can no
+    // longer fire neighbours, so the margin only needs to absorb panel
+    // scatter of the SAME press; 6px made edge presses miss entirely).
+    const int16_t M = 4;
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         uint8_t col = i % GRID_COLS;
         uint8_t row = i / GRID_COLS;
@@ -2966,11 +3001,13 @@ void closeSpotifyPage() {
 }
 
 void handleSpotTouch() {
-    if (!touch.tirqTouched() || !touch.touched()) return;
+    // Filtered data only: raw getPoint()/touched() bypasses the z floor and
+    // ghost filter, so the stuck phantom could hit the transport controls.
+    if (!touchDown) return;
     if (millis() < ignoreTouchUntil) return;
     static unsigned long spotTouchDebounce = 0;
     if (millis() < spotTouchDebounce) return;
-    TS_Point p = touch.getPoint();
+    TS_Point p = touchPoint;
     uint16_t x, y;
     mapTouchRaw(p, x, y);
     spotTouchDebounce = millis() + 150;
@@ -3594,6 +3631,32 @@ void handleHomeTouch() {
     uint16_t x, y;
     mapTouchRaw(p, x, y);
 
+    // Ghost/stability filter (the same gate the grid path uses): require
+    // the mapped point to hold still across GHOST_FRAMES consecutive
+    // frames before the home page arms ANYTHING. Phantom drift spikes
+    // (z can cross 600 for a frame mid-transition) jump hundreds of px
+    // between frames and never settle — they can no longer arm profile
+    // switches, the clock circle, or the pomodoro button.
+    if (!ghostSettled) {
+        if (ghostLastX >= 0 && abs((int)x - ghostLastX) <= 10 &&
+            abs((int)y - ghostLastY) <= 10) {
+            ghostFrames++;
+        } else {
+            ghostFrames = 1;
+        }
+        ghostLastX = x;
+        ghostLastY = y;
+        if (ghostFrames < GHOST_FRAMES) return;
+        ghostSettled = true;
+    }
+
+    static unsigned long lastHomeTouchLog = 0;
+    if (millis() - lastHomeTouchLog > 500) {
+        Serial.printf("Home touch raw=%d,%d z=%d screen=%u,%u\n",
+                      p.x, p.y, p.z, x, y);
+        lastHomeTouchLog = millis();
+    }
+
     static unsigned long homeTouchDebounce = 0;
     if (millis() < homeTouchDebounce) return;
     if (millis() < ignoreTouchUntil) return;
@@ -3602,15 +3665,18 @@ void handleHomeTouch() {
     if (y < GRID_Y_OFFSET) return; // status bar reserved
     if (y < 40) return;            // info strip not touchable
 
-    // Middle row: profile 3 (left), clock circle (center), profile 1 (right)
+    // Middle row: profile 3 (left) | clock circle (center) | profile 1
     if (y < 122) {
         if (x < 84) {
             pendingHomeProfile = 2; // executed on release (phantom never releases)
         } else if (x > 236) {
             pendingHomeProfile = 0;
         } else {
+            // 50px radius (drawn circle is 42): absorbs the small residual
+            // mapping error so the clock's lower half still counts as clock
+            // instead of falling into the pomodoro pill beneath it.
             int dx = (int)x - 160, dy = (int)y - 78;
-            if (dx * dx + dy * dy <= 44 * 44) {
+            if (dx * dx + dy * dy <= 50 * 50) {
                 // Tap-vs-hold resolved in loop(): tap opens the grid,
                 // holding 2.5s opens touch calibration
                 if (!homeClockPressActive) {
@@ -3622,17 +3688,22 @@ void handleHomeTouch() {
         return;
     }
 
-    // Bottom row: profile 4 (left), pomodoro (center), profile 2 (right).
-    // Pomodoro press is resolved in loop(): release = -/+1 min or
-    // start-pause (double-tap = reset), hold = full pomodoro page.
+    // Bottom row: profile 4 (left) | pomodoro pill | profile 2 (right).
+    // The pomodoro hit box is the DRAWN pill only (84..236 x 128..204).
+    // It used to be the whole mid-bottom band, so every press anywhere
+    // below the clock counted as a pomodoro press — with the panel's
+    // ~25px upward mapping error that meant "any press opens pomodoro".
     if (x < 84) {
         pendingHomeProfile = 3;
     } else if (x > 236) {
         pendingHomeProfile = 1;
-    } else if (!homePomoPressActive) {
-        homePomoPressActive = true;
-        homePomoPressStart = millis();
-        homePomoPressX = x;
+    } else if (y >= HOME_POMO_Y && y <= HOME_POMO_Y + HOME_POMO_H) {
+        if (!homePomoPressActive) {
+            homePomoPressActive = true;
+            homePomoPressStart = millis();
+            homePomoPressX = x;
+            homePomoPressY = y;
+        }
     }
 }
 
