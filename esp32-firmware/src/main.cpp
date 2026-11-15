@@ -450,7 +450,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "ui-v10-modern";
+const char* FW_TAG = "touch-v11-median";
 
 // ===== Setup =====
 void setup() {
@@ -549,6 +549,17 @@ void setup() {
     Serial.println("Setup complete!");
 }
 
+// Median of 5 values (insertion sort, returns the middle element)
+static int16_t median5(int16_t* v) {
+    for (uint8_t i = 1; i < 5; i++) {
+        int16_t k = v[i];
+        int8_t j = i - 1;
+        while (j >= 0 && v[j] > k) { v[j + 1] = v[j]; j--; }
+        v[j + 1] = k;
+    }
+    return v[2];
+}
+
 // Cancel everything a phantom/stuck contact may have armed: the pending
 // tap, press candidates, active holds and the pressed-button highlight.
 void cancelStuckPress() {
@@ -580,7 +591,20 @@ void loop() {
     // Proven path: library reads on the custom-mapped bus (first init wins).
     // SD stays disabled (ENABLE_SD 0) so nothing ever remaps the bus.
     if (touch.tirqTouched() && touch.touched()) {
-        touchPoint = touch.getPoint();
+        // Median of 5 raw reads: this panel scatters hundreds of counts
+        // between reads for the same finger spot; the median rejects the
+        // outliers so one spiky frame can't teleport the point into the
+        // neighbouring cell.
+        TS_Point samples[5];
+        int16_t xs[5], ys[5];
+        for (uint8_t i = 0; i < 5; i++) {
+            samples[i] = touch.getPoint();
+            xs[i] = samples[i].x;
+            ys[i] = samples[i].y;
+        }
+        touchPoint = samples[0];
+        touchPoint.x = median5(xs);
+        touchPoint.y = median5(ys);
         releaseFrames = 0;
         if (!touchDown) {
             // New contact begins: remember where and when it started
@@ -1680,6 +1704,10 @@ void handleTouch() {
 }
 
 int8_t getTouchedButton(uint16_t x, uint16_t y) {
+    // 6px firing margin: the panel scatters the same physical spot by up to
+    // ~8mm, and cells are separated by only ~1.3mm. A press must be well
+    // INSIDE a cell to fire it — edge grazing never fires the neighbour.
+    const int16_t M = 6;
     for (uint8_t i = 0; i < BUTTON_COUNT; i++) {
         uint8_t col = i % GRID_COLS;
         uint8_t row = i / GRID_COLS;
@@ -1687,8 +1715,8 @@ int8_t getTouchedButton(uint16_t x, uint16_t y) {
         int16_t btnX = BUTTON_PADDING + col * (BUTTON_WIDTH + BUTTON_PADDING);
         int16_t btnY = GRID_Y_OFFSET + BUTTON_PADDING + row * (BUTTON_HEIGHT + BUTTON_PADDING);
 
-        if (x >= btnX && x <= btnX + BUTTON_WIDTH &&
-            y >= btnY && y <= btnY + BUTTON_HEIGHT) {
+        if (x >= btnX + M && x <= btnX + BUTTON_WIDTH - 1 - M &&
+            y >= btnY + M && y <= btnY + BUTTON_HEIGHT - 1 - M) {
             return i;
         }
     }
