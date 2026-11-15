@@ -258,13 +258,16 @@ int8_t pomoPressCandidate = -1;
 unsigned long pomoPressStart = 0;
 // Tap-vs-swipe state (grid): tap executes on release, right-edge swipe goes back
 int8_t pendingButton = -1;
-// Release hysteresis: a faulty panel can drop contact for a frame or two
-// mid-press (pressure dip). Without hysteresis each dip looks like a lift +
-// a brand-new touch, so ONE physical press fired several buttons in a row
-// (Gmail -> Excel). Require this many steady "not touched" frames before
-// the contact really ends.
-const uint8_t RELEASE_FRAMES = 4;
-uint8_t releaseFrames = 0;
+// Release hysteresis (time-based): a faulty panel can drop contact for a
+// frame or two mid-press (pressure dip). Without hysteresis each dip looks
+// like a lift + a brand-new touch, so ONE physical press fired several
+// buttons in a row (Gmail -> Excel). Require this much steady "not
+// touched" time before the contact really ends.
+const unsigned long RELEASE_HYST_MS = 250;
+unsigned long releaseStartedAt = 0;
+// Home page profile slot armed by a press, executed on release only:
+// the phantom contact never releases, so it can never switch profiles.
+int8_t pendingHomeProfile = -1;
 // One action per touch: the resistive panel drifts a few px during a press
 // (Gmail->Calendar->Excel fired from ONE contact). Once a button fires for
 // this contact, no other button may fire until the finger lifts.
@@ -450,7 +453,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-v12-calsafe";
+const char* FW_TAG = "touch-v13-phantomhunt";
 
 // ===== Setup =====
 void setup() {
@@ -565,6 +568,7 @@ static int16_t median5(int16_t* v) {
 void cancelStuckPress() {
     pendingButton = -1;
     pomoPressCandidate = -1;
+    pendingHomeProfile = -1;
     homeClockPressActive = false;
     homePomoPressActive = false;
     swipeStartX = -1;
@@ -605,7 +609,7 @@ void loop() {
         touchPoint = samples[0];
         touchPoint.x = median5(xs);
         touchPoint.y = median5(ys);
-        releaseFrames = 0;
+        releaseStartedAt = 0;
         if (!touchDown) {
             // New contact begins: remember where and when it started
             touchStartAt = millis();
@@ -620,19 +624,17 @@ void loop() {
         bool deadSpot = stuckLearned &&
                         abs(touchPoint.x - stuckAX) < STUCK_RADIUS &&
                         abs(touchPoint.y - stuckAY) < STUCK_RADIUS;
-        if (!deadSpot && !stuckLearned && touchStartRawX >= 0 &&
-            millis() - touchStartAt > 5000 &&
-            abs(touchPoint.x - touchStartRawX) < STUCK_RADIUS &&
-            abs(touchPoint.y - touchStartRawY) < STUCK_RADIUS) {
-            // Learn ONCE per boot: any contact holding still for >5s is the
-            // phantom. Re-learning was tried and proved harmful: the phantom
-            // drifts while the user touches elsewhere, so the dead zone kept
-            // chasing it and landed on top of REAL buttons, blocking them.
+        // Any contact alive for >5s IS the stuck phantom — no real gesture
+        // needs 5s (the longest hold is the clock's 2.5s). Force-release it
+        // and (re-)anchor the dead zone at its current position: the
+        // phantom's rest spot DRIFTS between sessions (observed 175,3360 ->
+        // 590,3340), so a fixed anchor goes stale and the phantom escapes.
+        if (!deadSpot && touchDown && millis() - touchStartAt > 5000) {
             stuckLearned = true;
             stuckAX = touchPoint.x;
             stuckAY = touchPoint.y;
-            Serial.printf("Stuck touch learned at raw=%d,%d -> dead zone\n",
-                          stuckAX, stuckAY);
+            Serial.printf("Stuck touch learned at raw=%d,%d z=%d -> dead zone\n",
+                          stuckAX, stuckAY, touchPoint.z);
             deadSpot = true;
         }
         if (deadSpot) {
@@ -646,17 +648,18 @@ void loop() {
             lastTouchActivity = millis();
         }
     } else {
-        // Release hysteresis: only a STEADY absence of contact ends it.
-        // A 1-2 frame dip mid-press is a panel glitch, not a lift.
-        if (touchDown && releaseFrames < RELEASE_FRAMES) {
-            releaseFrames++;
-            // touchDown stays true through the dip; touchPoint keeps the
-            // last real reading, so handlers see a stable position.
+        // Release hysteresis (time-based): only a STEADY absence of contact
+        // ends it. A sub-250ms dip mid-press is a panel glitch, not a lift.
+        if (touchDown) {
+            if (releaseStartedAt == 0) releaseStartedAt = millis();
+            if (millis() - releaseStartedAt >= RELEASE_HYST_MS) {
+                lastTouchActivity = millis(); // genuine release moment
+                touchDown = false;
+                touchStartRawX = -1;
+                releaseStartedAt = 0;
+            }
         } else {
-            if (touchDown) lastTouchActivity = millis(); // release moment
-            touchDown = false;
-            touchStartRawX = -1;
-            releaseFrames = 0;
+            releaseStartedAt = 0;
         }
     }
 
@@ -698,6 +701,7 @@ void loop() {
             swipeDone = true;
             pendingButton = -1;
             pomoPressCandidate = -1;
+            pendingHomeProfile = -1;
             gestureFired = true;
             touchDebounceUntil = millis() + 600;
             ignoreTouchUntil = millis() + 600;
@@ -748,6 +752,16 @@ void loop() {
         } else if (millis() - homeClockPressStart > 2500) {
             homeClockPressActive = false;
             openTouchCalPage();
+        }
+    }
+
+    // Home profile buttons: deferred execution on release — a phantom
+    // contact never genuinely releases, so it can never switch profiles.
+    if (pendingHomeProfile >= 0) {
+        if (!touchDown) {
+            uint8_t slot = (uint8_t)pendingHomeProfile;
+            pendingHomeProfile = -1;
+            switchToHomeProfile(slot);
         }
     }
 
@@ -1688,7 +1702,7 @@ void handleTouch() {
 
         static unsigned long lastTouchLog = 0;
         if (millis() - lastTouchLog > 500) {
-            Serial.printf("Touch raw=%d,%d screen=%u,%u\n", p.x, p.y, x, y);
+            Serial.printf("Touch raw=%d,%d z=%d screen=%u,%u\n", p.x, p.y, p.z, x, y);
             lastTouchLog = millis();
         }
 
@@ -1724,9 +1738,9 @@ void handleTouch() {
             touchContactFired = true; // drift now can only cancel, never re-fire
             touchDebounceUntil = millis() + 280;
 
-            Serial.printf("Press idx=%d \"%s\" at screen=%u,%u raw=%d,%d\n",
+            Serial.printf("Press idx=%d \"%s\" at screen=%u,%u raw=%d,%d z=%d\n",
                           buttonIndex, buttons[buttonIndex].label.c_str(),
-                          x, y, p.x, p.y);
+                          x, y, p.x, p.y, p.z);
 
             // Pomodoro buttons: defer action until release (tap) or hold (open page)
             if (buttons[buttonIndex].hasWidget && buttons[buttonIndex].widgetType == "pomodoro") {
@@ -3567,9 +3581,9 @@ void handleHomeTouch() {
     // Middle row: profile 3 (left), clock circle (center), profile 1 (right)
     if (y < 122) {
         if (x < 84) {
-            switchToHomeProfile(2);
+            pendingHomeProfile = 2; // executed on release (phantom never releases)
         } else if (x > 236) {
-            switchToHomeProfile(0);
+            pendingHomeProfile = 0;
         } else {
             int dx = (int)x - 160, dy = (int)y - 78;
             if (dx * dx + dy * dy <= 44 * 44) {
@@ -3588,9 +3602,9 @@ void handleHomeTouch() {
     // Pomodoro press is resolved in loop(): release = -/+1 min or
     // start-pause (double-tap = reset), hold = full pomodoro page.
     if (x < 84) {
-        switchToHomeProfile(3);
+        pendingHomeProfile = 3;
     } else if (x > 236) {
-        switchToHomeProfile(1);
+        pendingHomeProfile = 1;
     } else if (!homePomoPressActive) {
         homePomoPressActive = true;
         homePomoPressStart = millis();
