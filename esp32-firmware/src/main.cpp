@@ -450,7 +450,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-v11-median";
+const char* FW_TAG = "touch-v12-calsafe";
 
 // ===== Setup =====
 void setup() {
@@ -620,19 +620,19 @@ void loop() {
         bool deadSpot = stuckLearned &&
                         abs(touchPoint.x - stuckAX) < STUCK_RADIUS &&
                         abs(touchPoint.y - stuckAY) < STUCK_RADIUS;
-        if (!deadSpot && touchStartRawX >= 0 &&
+        if (!deadSpot && !stuckLearned && touchStartRawX >= 0 &&
             millis() - touchStartAt > 5000 &&
             abs(touchPoint.x - touchStartRawX) < STUCK_RADIUS &&
             abs(touchPoint.y - touchStartRawY) < STUCK_RADIUS) {
-            // Learn (or re-learn): any contact holding still for >5s is the
-            // phantom. Re-learning lets the zone follow the spot if it drifts
-            // (a bad boot reading must not poison the anchor forever).
-            bool moved = stuckLearned;
+            // Learn ONCE per boot: any contact holding still for >5s is the
+            // phantom. Re-learning was tried and proved harmful: the phantom
+            // drifts while the user touches elsewhere, so the dead zone kept
+            // chasing it and landed on top of REAL buttons, blocking them.
             stuckLearned = true;
             stuckAX = touchPoint.x;
             stuckAY = touchPoint.y;
-            Serial.printf("Stuck touch learned at raw=%d,%d -> dead zone%s\n",
-                          stuckAX, stuckAY, moved ? " (moved)" : "");
+            Serial.printf("Stuck touch learned at raw=%d,%d -> dead zone\n",
+                          stuckAX, stuckAY);
             deadSpot = true;
         }
         if (deadSpot) {
@@ -1359,8 +1359,23 @@ void mapTouchRaw(const TS_Point& p, uint16_t& outX, uint16_t& outY) {
     outY = constrain(y, 0, SCREEN_HEIGHT - 1);
 }
 
+// Bump when the calibration storage layout/validity changes: old (or
+// garbage) stored values are ignored and defaults are used until the user
+// recalibrates. v3 wipes the broken cal saved on units with scatter.
+#define TCAL_VER 3
+
 void loadTouchCal() {
     preferences.begin("deck", true);
+    uint8_t ver = preferences.getUChar("tc_ver", 0);
+    if (ver != TCAL_VER) {
+        preferences.end();
+        calSwap = false;
+        calX0 = 200; calX1 = 3700;
+        calY0 = 240; calY1 = 3800;
+        Serial.println("Touch cal: stored version mismatch -> defaults (recalibrate!)");
+        Serial.printf("Touch cal: swap=0 x %.0f..%.0f  y %.0f..%.0f\n", calX0, calX1, calY0, calY1);
+        return;
+    }
     calSwap = preferences.getBool("tc_swap", false);
     calX0 = preferences.getFloat("tc_x0", 200.0f);
     calX1 = preferences.getFloat("tc_x1", 3700.0f);
@@ -1376,12 +1391,26 @@ void loadTouchCal() {
 
 void saveTouchCal() {
     preferences.begin("deck", false);
+    preferences.putUChar("tc_ver", TCAL_VER);
     preferences.putBool("tc_swap", calSwap);
     preferences.putFloat("tc_x0", calX0);
     preferences.putFloat("tc_x1", calX1);
     preferences.putFloat("tc_y0", calY0);
     preferences.putFloat("tc_y1", calY1);
     preferences.end();
+}
+
+// Erase the stored calibration (verify screen hold-5s gesture)
+void resetTouchCal() {
+    preferences.begin("deck", false);
+    preferences.remove("tc_ver");
+    preferences.remove("tc_swap");
+    preferences.remove("tc_x0");
+    preferences.remove("tc_x1");
+    preferences.remove("tc_y0");
+    preferences.remove("tc_y1");
+    preferences.end();
+    Serial.println("Touch cal reset -> rebooting with defaults");
 }
 
 // Landscape corner targets: TL, TR, BR, BL (inset 24px from each edge)
@@ -1458,7 +1487,7 @@ void drawTouchVerifyPage() {
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.drawString("VERIFY: touch a cell", SCREEN_WIDTH / 2, 9, 2);
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
-    tft.drawString("Hold 2s to finish", SCREEN_WIDTH / 2, 226, 2);
+    tft.drawString("Tap = finish   Hold 5s = reset cal", SCREEN_WIDTH / 2, 226, 2);
 }
 
 void finishTouchCal() {
@@ -1557,7 +1586,20 @@ void handleTouchCalTouch() {
                 lastVerifyLog = millis();
             }
             if (tcalHoldStart == 0) tcalHoldStart = millis();
-            if (millis() - tcalHoldStart > 2000) {
+            unsigned long held = millis() - tcalHoldStart;
+            if (held > 5000) {
+                // Hold 5s = wipe calibration and reboot with defaults
+                tft.fillScreen(TFT_BLACK);
+                tft.setTextDatum(MC_DATUM);
+                tft.setTextColor(TFT_RED, TFT_BLACK);
+                tft.drawString("Cal reset - rebooting", SCREEN_WIDTH / 2, 120, 2);
+                resetTouchCal();
+                delay(1200);
+                ESP.restart();
+            }
+        } else {
+            // Released: a short tap finishes verification
+            if (tcalHoldStart > 0 && millis() - tcalHoldStart < 1000) {
                 tcalVerify = false;
                 tcalHoldStart = 0;
                 touchCalPageActive = false;
@@ -1565,7 +1607,6 @@ void handleTouchCalTouch() {
                 drawStatusBar();
                 Serial.println("Touch verify done");
             }
-        } else {
             tcalHoldStart = 0;
         }
         return;
@@ -1586,8 +1627,28 @@ void handleTouchCalTouch() {
         return;
     }
     if (tcalSamples < 3) return; // stray noise tap
-    tcalRawX[tcalTarget] = (int16_t)(tcalSumX / tcalSamples + 0.5f);
-    tcalRawY[tcalTarget] = (int16_t)(tcalSumY / tcalSamples + 0.5f);
+    int16_t ax = (int16_t)(tcalSumX / tcalSamples + 0.5f);
+    int16_t ay = (int16_t)(tcalSumY / tcalSamples + 0.5f);
+    // Plausibility gate: the corner must sit in the right QUADRANT of the
+    // raw space (wide +-1200 bounds vs the default map). A phantom-blend or
+    // scattered tap can never poison the calibration with insane values
+    // again (this unit once saved x 1580..3524 and every press mapped wrong).
+    bool ok = false;
+    switch (tcalTarget) {
+        case 0: ok = (ax < 1400 && ay < 1440); break; // top-left
+        case 1: ok = (ax > 2300 && ay < 1440); break; // top-right
+        case 2: ok = (ax > 2300 && ay > 2560); break; // bottom-right
+        case 3: ok = (ax < 1400 && ay > 2560); break; // bottom-left
+    }
+    if (!ok) {
+        Serial.printf("Touch cal target %u implausible raw=%d,%d — tap again\n",
+                      tcalTarget, ax, ay);
+        tcalSamples = 0;
+        tcalSumX = tcalSumY = 0;
+        return;
+    }
+    tcalRawX[tcalTarget] = ax;
+    tcalRawY[tcalTarget] = ay;
     Serial.printf("Touch cal target %u: raw=%d,%d\n",
                   tcalTarget, tcalRawX[tcalTarget], tcalRawY[tcalTarget]);
     tcalTarget++;
