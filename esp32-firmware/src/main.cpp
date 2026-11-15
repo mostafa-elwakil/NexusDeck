@@ -281,6 +281,12 @@ unsigned long ignoreTouchUntil = 0;
 int16_t swipeStartX = -1, swipeStartY = 0;
 bool swipeDone = false;
 bool homeFetchPending = false; // fetch home data AFTER drawing (fast back)
+// Z-pressure floor: this unit's stuck phantom reports z≈400-500 (and its
+// drift transitions up to ~1000) while real finger presses read z≈2000-3100.
+// Anything below Z_MIN is not a finger — this blocks the phantom at ANY
+// position it drifts to, with no dead zones and no position chasing.
+const int16_t Z_MIN = 1100;
+
 // Mapped touch coords for the current frame (shared by gesture + handlers)
 uint16_t touchX = 0, touchY = 0;
 // Moment of the last press/release: HTTP sync skips around it so touch
@@ -453,7 +459,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-v13-phantomhunt";
+const char* FW_TAG = "touch-v14-zfilter";
 
 // ===== Setup =====
 void setup() {
@@ -600,52 +606,70 @@ void loop() {
         // outliers so one spiky frame can't teleport the point into the
         // neighbouring cell.
         TS_Point samples[5];
-        int16_t xs[5], ys[5];
+        int16_t xs[5], ys[5], zs[5];
         for (uint8_t i = 0; i < 5; i++) {
             samples[i] = touch.getPoint();
             xs[i] = samples[i].x;
             ys[i] = samples[i].y;
+            zs[i] = samples[i].z;
         }
         touchPoint = samples[0];
         touchPoint.x = median5(xs);
         touchPoint.y = median5(ys);
+        touchPoint.z = median5(zs);
         releaseStartedAt = 0;
-        if (!touchDown) {
-            // New contact begins: remember where and when it started
-            touchStartAt = millis();
-            touchStartRawX = touchPoint.x;
-            touchStartRawY = touchPoint.y;
-        }
-        // Stuck-touch guard: a damaged/floating resistive panel can hold one
-        // spot permanently "touched". A contact resting motionless for >5s
-        // (or starting inside an already-learned dead zone) is the phantom:
-        // it is ignored entirely so it can never press a button, wake the
-        // screen or stall the sync loop.
-        bool deadSpot = stuckLearned &&
-                        abs(touchPoint.x - stuckAX) < STUCK_RADIUS &&
-                        abs(touchPoint.y - stuckAY) < STUCK_RADIUS;
-        // Any contact alive for >5s IS the stuck phantom — no real gesture
-        // needs 5s (the longest hold is the clock's 2.5s). Force-release it
-        // and (re-)anchor the dead zone at its current position: the
-        // phantom's rest spot DRIFTS between sessions (observed 175,3360 ->
-        // 590,3340), so a fixed anchor goes stale and the phantom escapes.
-        if (!deadSpot && touchDown && millis() - touchStartAt > 5000) {
-            stuckLearned = true;
-            stuckAX = touchPoint.x;
-            stuckAY = touchPoint.y;
-            Serial.printf("Stuck touch learned at raw=%d,%d z=%d -> dead zone\n",
-                          stuckAX, stuckAY, touchPoint.z);
-            deadSpot = true;
-        }
-        if (deadSpot) {
-            if (touchDown) { // live contact turning phantom: cancel what it armed
+
+        // Z-pressure floor: anything softer than a real finger is not a
+        // touch at all. This is what neutralizes the stuck phantom for
+        // good — it reads z≈400-500 wherever it drifts, real presses
+        // read z≈2000+. Low-z frames skip ALL contact handling.
+        if (touchPoint.z < Z_MIN) {
+            if (touchDown) {
                 touchDown = false;
                 touchStartRawX = -1;
                 cancelStuckPress();
+                Serial.println("Low-z contact dropped (phantom/noise)");
+            } else {
+                static unsigned long lastLowZLog = 0;
+                if (millis() - lastLowZLog > 2000) {
+                    Serial.printf("Low-z contact ignored raw=%d,%d z=%d\n",
+                                  touchPoint.x, touchPoint.y, touchPoint.z);
+                    lastLowZLog = millis();
+                }
             }
         } else {
-            touchDown = true;
-            lastTouchActivity = millis();
+            if (!touchDown) {
+                // New contact begins: remember where and when it started
+                touchStartAt = millis();
+                touchStartRawX = touchPoint.x;
+                touchStartRawY = touchPoint.y;
+            }
+            // Stuck-touch guard (kept as a fallback): a phantom state that
+            // somehow passes the z floor and rests >5s becomes a dead zone.
+            bool deadSpot = stuckLearned &&
+                            abs(touchPoint.x - stuckAX) < STUCK_RADIUS &&
+                            abs(touchPoint.y - stuckAY) < STUCK_RADIUS;
+            if (!deadSpot && touchDown && touchPoint.z < Z_MIN &&
+                millis() - touchStartAt > 5000) {
+                // Unreachable while the z-filter routes soft contacts away,
+                // but kept so a REAL press (z high) can NEVER be dead-zoned.
+                stuckLearned = true;
+                stuckAX = touchPoint.x;
+                stuckAY = touchPoint.y;
+                Serial.printf("Stuck touch learned at raw=%d,%d z=%d -> dead zone\n",
+                              stuckAX, stuckAY, touchPoint.z);
+                deadSpot = true;
+            }
+            if (deadSpot) {
+                if (touchDown) { // live contact turning phantom: cancel what it armed
+                    touchDown = false;
+                    touchStartRawX = -1;
+                    cancelStuckPress();
+                }
+            } else {
+                touchDown = true;
+                lastTouchActivity = millis();
+            }
         }
     } else {
         // Release hysteresis (time-based): only a STEADY absence of contact
