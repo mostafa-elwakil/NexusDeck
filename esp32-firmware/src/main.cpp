@@ -298,6 +298,11 @@ unsigned long lastTouchActivity = 0;
 // position-based dead zones exist — they blocked real buttons in v13.)
 unsigned long touchStartAt = 0;
 int16_t touchStartRawX = -1, touchStartRawY = -1;
+// Soft-frame release tracking: a low-z stretch ends a press; short soft dips
+// while a real press is down are held out (the press position is kept).
+unsigned long lowZSince = 0;
+uint8_t zHighFrames = 0;
+TS_Point lastGoodPoint;
 
 // Ghost-touch filter: the CYD controller can emit a phantom frame (EMI /
 // floating sensor) that acts like a tap. A real finger is still down and
@@ -314,8 +319,8 @@ bool ghostSettled = false;
 // keys. The four values are the raw XPT2046 readings measured at the
 // screen corners; defaults keep the original hard-coded map until the
 // user runs calibration (home page: hold the clock 2.5s).
-float calX0 = 200, calX1 = 3700;  // raw reading at screen x=0 / x=W-1
-float calY0 = 240, calY1 = 3800;  // raw reading at screen y=0 / y=H-1
+float calX0 = 806, calX1 = 3700;  // raw reading at screen x=0 / x=W-1
+float calY0 = 1273, calY1 = 3208;  // raw reading at screen y=0 / y=H-1
 bool calSwap = false;             // true: panel axes rotated 90° vs display
 bool touchCalPageActive = false;
 uint8_t tcalTarget = 0;           // 0..3 crosshair index
@@ -330,6 +335,9 @@ int16_t tcalRawX[4], tcalRawY[4];
 bool tcalReady = false;           // armed after the opening finger lifts
 // Verification screen after saving: dot must follow the finger exactly
 bool tcalVerify = false;
+// Armed only after the corner-tap finger lifts: otherwise the entry press
+// counts as the "short tap to exit" and VERIFY closes instantly.
+bool tcalVerifyArmed = false;
 unsigned long tcalHoldStart = 0;
 uint16_t tcalLastVX = 0xFFFF, tcalLastVY = 0xFFFF;
 int pomoPageLastSecond = -1;
@@ -634,14 +642,29 @@ void loop() {
 
         // Z-pressure floor: anything softer than a real finger is not a
         // touch at all. This is what neutralizes the stuck phantom for
-        // good — it reads z≈400-520 wherever it drifts, real presses
-        // read z≈2000+. Low-z frames skip ALL contact handling.
+        // good — it reads z≈400-640 wherever it drifts, real presses
+        // read z≈1000+.
+        //
+        // Soft frame handling: the phantom re-occupies the panel the moment
+        // a real finger lifts, so "soft" is NOT "cancel". A soft stretch
+        // while pressed means the finger left: end the press (release) and
+        // let every handler resolve its pending action normally. Only a
+        // >120ms soft stretch counts as a release so a panel dip mid-press
+        // cannot cut a press short, and the last GOOD position is kept so
+        // handlers never act on the phantom's location.
         if (touchPoint.z < Z_MIN) {
+            zHighFrames = 0;
             if (touchDown) {
-                touchDown = false;
-                touchStartRawX = -1;
-                cancelStuckPress();
-                Serial.println("Low-z contact dropped (phantom/noise)");
+                if (lowZSince == 0) lowZSince = millis();
+                if (millis() - lowZSince >= 120) {
+                    touchDown = false;
+                    touchStartRawX = -1;
+                    lowZSince = 0;
+                    lastTouchActivity = millis();
+                    Serial.println("Touch released (finger lifted, soft panel)");
+                } else {
+                    touchPoint = lastGoodPoint; // hold the real press position
+                }
             } else {
                 static unsigned long lastLowZLog = 0;
                 if (millis() - lastLowZLog > 2000) {
@@ -669,16 +692,25 @@ void loop() {
             // blocking: every position is trustworthy as long as z is high
             // (v13 proved dead zones land on real buttons; the z filter is
             // the only guard the phantom needs).
-            if (!touchDown) {
+            lowZSince = 0;
+            lastGoodPoint = touchPoint;
+            // Require 2 consecutive accepted frames: a single phantom drift
+            // spike (z briefly over the floor) can never start a contact and
+            // arm a button.
+            if (zHighFrames < 255) zHighFrames++;
+            if (!touchDown && zHighFrames >= 2) {
                 // New contact begins: remember where and when it started
                 touchStartAt = millis();
                 touchStartRawX = touchPoint.x;
                 touchStartRawY = touchPoint.y;
             }
-            touchDown = true;
-            lastTouchActivity = millis();
+            if (zHighFrames >= 2) {
+                touchDown = true;
+                lastTouchActivity = millis();
+            }
         }
     } else {
+        zHighFrames = 0;
         // Release hysteresis (time-based): only a STEADY absence of contact
         // ends it. A sub-250ms dip mid-press is a panel glitch, not a lift.
         if (touchDown) {
@@ -1434,8 +1466,13 @@ void loadTouchCal() {
     if (ver != TCAL_VER) {
         preferences.end();
         calSwap = false;
-        calX0 = 200; calX1 = 3700;
-        calY0 = 240; calY1 = 3800;
+        // X/Y defaults measured on THIS unit from confirmed button presses:
+        // the old 200..3700 / 240..3800 guesses were stretched vs the
+        // panel's real active area, so every press landed one ROW below
+        // (Y -> 1273..3208) and one COLUMN right (X -> 806..3700) of its
+        // cell ("VS Code opens the app beside/beneath it").
+        calX0 = 806; calX1 = 3700;
+        calY0 = 1273; calY1 = 3208;
         Serial.println("Touch cal: stored version mismatch -> defaults (recalibrate!)");
         Serial.printf("Touch cal: swap=0 x %.0f..%.0f  y %.0f..%.0f\n", calX0, calX1, calY0, calY1);
         return;
@@ -1446,9 +1483,9 @@ void loadTouchCal() {
     calY0 = preferences.getFloat("tc_y0", 240.0f);
     calY1 = preferences.getFloat("tc_y1", 3800.0f);
     preferences.end();
-    // Insane stored values fall back to the legacy map
-    if (fabsf(calX1 - calX0) < 800) { calX0 = 200; calX1 = 3700; }
-    if (fabsf(calY1 - calY0) < 800) { calY0 = 240; calY1 = 3800; }
+    // Insane stored values fall back to the measured unit map
+    if (fabsf(calX1 - calX0) < 800) { calX0 = 806; calX1 = 3700; }
+    if (fabsf(calY1 - calY0) < 800) { calY0 = 1273; calY1 = 3208; }
     Serial.printf("Touch cal: swap=%d x %.0f..%.0f  y %.0f..%.0f\n",
                   calSwap, calX0, calX1, calY0, calY1);
 }
@@ -1606,6 +1643,7 @@ void finishTouchCal() {
 
     // Verification screen: the dot must follow the finger exactly
     tcalVerify = true;
+    tcalVerifyArmed = false; // arm after the corner-tap finger lifts
     tcalHoldStart = 0;
     tcalLastVX = tcalLastVY = 0xFFFF;
     drawTouchVerifyPage();
@@ -1615,6 +1653,7 @@ void handleTouchCalTouch() {
     // VERIFY mode: show where every press lands + which cell it picks
     if (tcalVerify) {
         if (touchDown) {
+            if (!tcalVerifyArmed) return; // entry corner-tap still down
             uint16_t x, y;
             mapTouchRaw(touchPoint, x, y);
             if (x != tcalLastVX || y != tcalLastVY) {
@@ -1662,9 +1701,11 @@ void handleTouchCalTouch() {
                 ESP.restart();
             }
         } else {
-            // Released: a short tap finishes verification
+            // Released: arm the screen, and a short deliberate tap now exits
+            tcalVerifyArmed = true;
             if (tcalHoldStart > 0 && millis() - tcalHoldStart < 1000) {
                 tcalVerify = false;
+                tcalVerifyArmed = false;
                 tcalHoldStart = 0;
                 touchCalPageActive = false;
                 showGridOrPage();
