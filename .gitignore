@@ -37,6 +37,13 @@ build/
 .pio/
 *.log
 
+# Release artifacts must NEVER be committed: the v2.4.9 installer picked a
+# committed 2.4.4 zip (Select-Object -First 1) and shipped the old companion.
+streamdeck-simulator/server/NexusDeck-*.zip
+streamdeck-simulator/server/NexusDeck-*.tar.gz
+streamdeck-simulator/server/*.sha256
+installer-out/
+
 # Environment files
 .env
 .env.local

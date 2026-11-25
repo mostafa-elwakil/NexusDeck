@@ -30,7 +30,7 @@ CORS(app, origins=['http://localhost:*', 'http://127.0.0.1:*', '127.0.0.1',
                    'https://nexusdeck', 'https://nexusdeck:*'])
 
 # Server configuration
-SERVER_VERSION = '2.4.8'
+SERVER_VERSION = '2.4.10'
 PORT = 8765
 HOST = '0.0.0.0'
 

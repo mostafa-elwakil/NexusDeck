@@ -146,9 +146,28 @@ class StudioUI {
         this.attachLightPanel();
         this.attachEventListeners();
         this.checkForUpdates(false);
+        this.loadCompanionVersion();
         setInterval(() => this.checkForUpdates(false), 6 * 3600 * 1000);
         this.refreshProfileSwitcher();
         this.updateServerStatus(this.actions.serverAvailable);
+    }
+
+    // Show the running companion version in the footer: the only reliable way
+    // to tell whether the installed build actually carries a given feature
+    // (the v2.4.9 installer accidentally shipped the 2.4.4 companion).
+    async loadCompanionVersion() {
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/health`);
+            if (!response.ok) return;
+            const data = await response.json();
+            const chip = document.getElementById('companion-version');
+            if (chip && data.version) {
+                chip.textContent = `v${data.version}`;
+                chip.title = `${data.server || 'NexusDeck Companion'} v${data.version} (${data.platform || ''})`;
+            }
+        } catch (error) {
+            // server offline: keep the placeholder
+        }
     }
 
     // Fill the view-mode profile dropdown from the server (home slots first,
@@ -189,6 +208,7 @@ class StudioUI {
         footer.innerHTML = `
             <p class="footer-hint"><kbd>Ctrl</kbd>+<kbd>E</kbd> studio · <kbd>Ctrl</kbd>+<kbd>S</kbd> save · click a key to run</p>
             <div class="footer-status-group">
+                <span id="companion-version" class="status-pill" title="Companion server version">v—</span>
                 <div id="esp32-status" class="status-pill is-offline" role="status" title="ESP32 hardware sync">ESP32 offline</div>
                 <div id="server-status" class="status-pill is-offline" role="status">Companion offline</div>
             </div>
@@ -606,6 +626,17 @@ class StudioUI {
                     <div class="system-label">Brightness (<span id="light-brightness-val">40</span>)</div>
                     <input type="range" id="light-brightness" class="form-control" min="0" max="80" value="40" style="margin-top: 6px; width: 100%;">
                 </div>
+                <div class="system-row" style="display: block;">
+                    <div class="system-label">Presets</div>
+                    <select id="light-preset-select" class="form-control" style="margin-top: 6px;">
+                        <option value="">No presets yet — save one</option>
+                    </select>
+                    <div style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
+                        <button id="btn-light-preset-apply" class="btn btn-secondary" type="button" style="flex: 1;">Apply</button>
+                        <button id="btn-light-preset-save" class="btn btn-secondary" type="button" title="Save the current effect/color/brightness as a named preset">💾</button>
+                        <button id="btn-light-preset-del" class="btn btn-secondary" type="button" title="Delete the selected preset">🗑</button>
+                    </div>
+                </div>
                 <div class="system-row" id="light-index-row" style="display: none;">
                     <div>
                         <div class="system-label">Pixel index</div>
@@ -614,7 +645,7 @@ class StudioUI {
                     <input type="number" id="light-index" class="form-control" min="0" max="63" value="0" style="width: 70px; flex: none;">
                 </div>
                 <div class="system-status" id="light-status-line"></div>
-                <div class="system-hint" style="margin-top: 6px;">Applies to the device within ~3 s (next sync). Buttons with the WS2812 preset action still work — the panel sets the standing state.</div>
+                <div class="system-hint" style="margin-top: 6px;">Applies to the device within ~3 s (next sync). Presets are stored on the server and can also be used by WS2812 buttons — the panel is the standing light control.</div>
             </div>
         `;
         return panel;
@@ -626,7 +657,10 @@ class StudioUI {
         document.getElementById('btn-toggle-light')?.addEventListener('click', () => {
             const open = document.body.classList.toggle('light-open');
             document.getElementById('btn-toggle-light')?.classList.toggle('active', open);
-            if (open) this.loadLightState();
+            if (open) {
+                this.loadLightState();
+                this.refreshLightPresets();
+            }
         });
         document.getElementById('btn-close-light')?.addEventListener('click', () => {
             document.body.classList.remove('light-open');
@@ -680,6 +714,10 @@ class StudioUI {
                 send(this.lightPanelState);
             }
         });
+
+        document.getElementById('btn-light-preset-apply')?.addEventListener('click', () => this.applyLightPreset());
+        document.getElementById('btn-light-preset-save')?.addEventListener('click', () => this.saveLightPreset());
+        document.getElementById('btn-light-preset-del')?.addEventListener('click', () => this.deleteLightPreset());
     }
 
     applyLightIndexVisibility() {
@@ -688,39 +726,145 @@ class StudioUI {
         if (row) row.style.display = mode === 'pixel' ? 'flex' : 'none';
     }
 
+    setLightStatus(message) {
+        const status = document.getElementById('light-status-line');
+        if (status) status.textContent = message || '';
+    }
+
+    // Reflect a {power, mode, color, brightness, index} state in the controls.
+    applyLightStateToControls(state) {
+        const powerInput = document.getElementById('light-power');
+        const effect = document.getElementById('light-effect');
+        const colorInput = document.getElementById('light-color');
+        const colorText = document.getElementById('light-color-text');
+        const brightnessInput = document.getElementById('light-brightness');
+        const indexInput = document.getElementById('light-index');
+        if (powerInput) powerInput.checked = state.power !== false;
+        if (effect) effect.value = state.mode || 'solid';
+        if (colorInput) colorInput.value = state.color || '#008080';
+        if (colorText) colorText.value = state.color || '#008080';
+        if (brightnessInput) {
+            brightnessInput.value = state.brightness ?? 40;
+            const label = document.getElementById('light-brightness-val');
+            if (label) label.textContent = String(state.brightness ?? 40);
+        }
+        if (indexInput) indexInput.value = String(state.index ?? 0);
+        this.applyLightIndexVisibility();
+    }
+
     async loadLightState() {
         try {
             const response = await fetch(`${this.actions.serverUrl}/api/led-presets`);
             if (!response.ok) throw new Error(`status ${response.status}`);
             const data = await response.json();
             const current = data.current || {};
-            const power = current.power !== false;
-            const mode = current.mode || 'solid';
-            const color = current.color || '#008080';
-            const brightness = Number(current.brightness ?? 40);
-            const index = Number(current.index ?? 0);
-            this.lightPanelState = { power, mode, color, brightness, index };
-            const powerInput = document.getElementById('light-power');
-            const effect = document.getElementById('light-effect');
-            const colorInput = document.getElementById('light-color');
-            const colorText = document.getElementById('light-color-text');
-            const brightnessInput = document.getElementById('light-brightness');
-            const indexInput = document.getElementById('light-index');
-            if (powerInput) powerInput.checked = power;
-            if (effect) effect.value = mode;
-            if (colorInput) colorInput.value = color;
-            if (colorText) colorText.value = color;
-            if (brightnessInput) {
-                brightnessInput.value = brightness;
-                document.getElementById('light-brightness-val').textContent = String(brightness);
-            }
-            if (indexInput) indexInput.value = String(index);
-            this.applyLightIndexVisibility();
-            const status = document.getElementById('light-status-line');
-            if (status) status.textContent = '';
+            this.lightPanelState = {
+                power: current.power !== false,
+                mode: current.mode || 'solid',
+                color: current.color || '#008080',
+                brightness: Number(current.brightness ?? 40),
+                index: Number(current.index ?? 0)
+            };
+            this.applyLightStateToControls(this.lightPanelState);
+            this.setLightStatus('');
         } catch (error) {
-            const status = document.getElementById('light-status-line');
-            if (status) status.textContent = `Current state unavailable: ${error.message}`;
+            this.setLightStatus(`Current state unavailable: ${error.message}`);
+        }
+    }
+
+    // Saved presets from the server (same list the ESP32 syncs). This is the
+    // dedicated lighting control: apply/save/delete without editing a button.
+    async refreshLightPresets(selected = '') {
+        const sel = document.getElementById('light-preset-select');
+        if (!sel) return;
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`);
+            if (!response.ok) throw new Error(`status ${response.status}`);
+            const data = await response.json();
+            const presets = Array.isArray(data.presets) ? data.presets : [];
+            const wanted = selected || sel.value;
+            sel.innerHTML = presets.length
+                ? presets.map((preset) => {
+                    const name = this.escapeHtml(preset.name);
+                    const isSelected = preset.name === wanted ? ' selected' : '';
+                    return `<option value="${name}"${isSelected}>${name}</option>`;
+                }).join('')
+                : '<option value="">No presets yet — 💾 save one</option>';
+            if (presets.length) {
+                this.setLightStatus(`${presets.length} preset(s) — device applies within ~3 s`);
+            }
+        } catch (error) {
+            sel.innerHTML = '<option value="">Presets unavailable (server offline?)</option>';
+            this.setLightStatus(`Presets unavailable: ${error.message}`);
+        }
+    }
+
+    async applyLightPreset() {
+        const name = (document.getElementById('light-preset-select')?.value || '').trim();
+        if (!name) return;
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`);
+            if (!response.ok) throw new Error(`status ${response.status}`);
+            const data = await response.json();
+            const preset = (data.presets || []).find((item) => item.name === name);
+            if (!preset) throw new Error(`preset "${name}" not found`);
+            const state = {
+                power: true,
+                mode: preset.mode || 'solid',
+                color: preset.color || '#008080',
+                brightness: Number(preset.brightness ?? 40),
+                index: Number(preset.index ?? 0)
+            };
+            await this.sendLightState(state);
+            this.applyLightStateToControls(state);
+            this.setLightStatus(`Preset applied: ${name}`);
+        } catch (error) {
+            this.setLightStatus(`Preset not applied: ${error.message}`);
+        }
+    }
+
+    async saveLightPreset() {
+        const name = (prompt('Preset name (e.g. cinema, gaming, chill):') || '').trim();
+        if (!name) return;
+        const state = this.lightPanelState || {};
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    op: 'save',
+                    name,
+                    mode: state.mode || 'solid',
+                    color: state.color || '#008080',
+                    brightness: Number(state.brightness ?? 40),
+                    index: Number(state.index ?? 0)
+                })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || 'failed');
+            this.setLightStatus(`Preset saved: ${name}`);
+            await this.refreshLightPresets(name);
+        } catch (error) {
+            this.setLightStatus(`Preset save failed: ${error.message}`);
+        }
+    }
+
+    async deleteLightPreset() {
+        const name = (document.getElementById('light-preset-select')?.value || '').trim();
+        if (!name) return;
+        if (!confirm(`Delete preset "${name}"?`)) return;
+        try {
+            const response = await fetch(`${this.actions.serverUrl}/api/led-presets`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ op: 'delete', name })
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || 'failed');
+            this.setLightStatus(`Preset deleted: ${name}`);
+            await this.refreshLightPresets();
+        } catch (error) {
+            this.setLightStatus(`Preset delete failed: ${error.message}`);
         }
     }
 
@@ -736,11 +880,9 @@ class StudioUI {
             if (!response.ok || !data.success) {
                 throw new Error(data.error || `status ${response.status}`);
             }
-            const status = document.getElementById('light-status-line');
-            if (status) status.textContent = '';
+            this.setLightStatus('');
         } catch (error) {
-            const status = document.getElementById('light-status-line');
-            if (status) status.textContent = `LED state not applied: ${error.message}`;
+            this.setLightStatus(`LED state not applied: ${error.message}`);
         }
     }
 

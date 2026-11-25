@@ -39,12 +39,32 @@ jobs:
         run: |
           $ver = "${{ github.ref_name }}"
           if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
+          # Remove any stale archive committed/left in the workspace BEFORE
+          # packaging. The v2.4.9 installer shipped the old 2.4.4 companion
+          # because the artifact glob matched a stale zip and the installer
+          # job took "the first" one. Never let that happen again.
+          Remove-Item -Path *.zip, *.sha256, *.tar.gz -Force -ErrorAction SilentlyContinue
+          # Features are detected from the SOURCE we just built (not assumed),
+          # so a checkout missing the LED UI fails the build loudly.
+          $features = @()
+          if (Select-String -Path ../../streamdeck-simulator/js/studio-ui.js -Pattern 'btn-toggle-light' -Quiet) { $features += 'light-panel' }
+          if (Select-String -Path ./server.py -Pattern '/api/led-presets' -Quiet) { $features += 'led-presets' }
+          if ($features.Count -lt 2) {
+            Write-Error "Build source is missing LED UI features (found: $($features -join ', '))"
+            exit 1
+          }
           New-Item -ItemType Directory -Force -Path pkg | Out-Null
           Copy-Item dist/NexusDeckCompanion.exe pkg/
           Copy-Item ../../tools/release/Run-NexusDeck.bat pkg/
           Copy-Item ../../tools/release/README.txt pkg/
           Copy-Item assets/nexusdeck.ico pkg/
           Copy-Item ../../tools/setup-hostname.ps1, ../../tools/trust-cert.ps1, ../../tools/setup-https.ps1 pkg/
+          @{
+            version = $ver
+            commit = "${{ github.sha }}"
+            built_at = (Get-Date).ToUniversalTime().ToString('o')
+            features = $features
+          } | ConvertTo-Json | Out-File pkg/build-info.json -Encoding utf8
           $zip = "NexusDeck-$ver-windows-x64.zip"
           Compress-Archive -Path pkg/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash + "  $zip" | Out-File "$zip.sha256" -Encoding ascii
@@ -83,11 +103,20 @@ jobs:
         run: |
           ver="${{ github.ref_name }}"
           if [ "$ver" = "main" ] || [ "$ver" = "master" ]; then ver="dev"; fi
+          # Stale archives must never leak into the release artifacts.
+          rm -f ./*.zip ./*.tar.gz ./*.sha256
+          if ! grep -q 'btn-toggle-light' ../../streamdeck-simulator/js/studio-ui.js \
+             || ! grep -q '/api/led-presets' ./server.py; then
+            echo "::error::Build source is missing LED UI features (light panel / led-presets)"
+            exit 1
+          fi
           mkdir -p pkg
           cp dist/NexusDeckCompanion pkg/
           cp ../../tools/release/run-nexusdeck.sh ../../tools/release/README.txt pkg/
           cp ../../tools/installer/linux/install.sh ../../tools/installer/linux/nexusdeck.desktop pkg/
           cp assets/nexusdeck-blue.png pkg/nexusdeck.png
+          printf '{"version":"%s","commit":"%s","built_at":"%s","features":["light-panel","led-presets"]}\n' \
+            "$ver" "${{ github.sha }}" "$(date -u +%FT%TZ)" > pkg/build-info.json
           chmod +x pkg/NexusDeckCompanion pkg/run-nexusdeck.sh pkg/install.sh
           tarball="NexusDeck-$ver-linux-x64.tar.gz"
           tar -czf "$tarball" -C pkg .
@@ -161,11 +190,40 @@ jobs:
         run: |
           $ver = "${{ github.ref_name }}"
           if ($ver -eq 'main' -or $ver -eq 'master') { $ver = 'dev' }
-          # Resolve the zip explicitly: a wildcard Path here can resolve to
-          # multiple files on newer PowerShell (zip + .zip.sha256) and fail.
-          $zipFile = Get-ChildItem staging -Filter *.zip | Select-Object -First 1
-          if (-not $zipFile) { Write-Error "No Windows zip found in staging artifact"; exit 1 }
+          # Pick the EXACT archive this run built. Never "the first zip":
+          # that is how v2.4.9's installer ended up shipping the stale 2.4.4
+          # companion from a zip that was committed to the repo.
+          $expected = "NexusDeck-$ver-windows-x64.zip"
+          $zipFile = Get-ChildItem staging -Filter $expected | Select-Object -First 1
+          if (-not $zipFile) {
+            Get-ChildItem staging | ForEach-Object { Write-Host "staged: $($_.Name)" }
+            Write-Error "Expected $expected in the Windows artifact (stale or missing zip)"
+            exit 1
+          }
+          Write-Host "Using archive: $($zipFile.Name) ($($zipFile.Length) bytes)"
           Expand-Archive -LiteralPath $zipFile.FullName -DestinationPath staging/pkg -Force
+          $exePath = Join-Path (Join-Path (Get-Location) 'staging/pkg') 'NexusDeckCompanion.exe'
+          if (-not (Test-Path $exePath)) {
+            Write-Error "NexusDeckCompanion.exe missing from $expected"
+            exit 1
+          }
+          # build-info.json is written by the build job: a stale zip has an
+          # older version (or none) and must fail here, not ship.
+          $infoPath = Join-Path (Join-Path (Get-Location) 'staging/pkg') 'build-info.json'
+          if (-not (Test-Path $infoPath)) {
+            Write-Error "build-info.json missing from $expected (stale archive?)"
+            exit 1
+          }
+          $info = Get-Content $infoPath -Raw | ConvertFrom-Json
+          if ($info.version -ne $ver) {
+            Write-Error "Archive version '$($info.version)' does not match release '$ver'"
+            exit 1
+          }
+          if (-not ($info.features -contains 'light-panel')) {
+            Write-Error "BUILD VERIFY FAILED: archive lacks the light-panel feature"
+            exit 1
+          }
+          Write-Host "Verified companion build: $($info | ConvertTo-Json -Compress)"
           # NOTE: StagingDir must be absolute - Inno resolves relative Source
           # paths against the script's own directory, not the working dir.
           $stagingAbs = Join-Path (Get-Location) 'staging/pkg'
@@ -179,6 +237,7 @@ jobs:
                    Select-Object -First 1
           if (-not $iscc) { Write-Error "ISCC.exe not found after choco install"; exit 1 }
           Write-Host "Using ISCC: $iscc"
+          Remove-Item -Path installer-out -Recurse -Force -ErrorAction SilentlyContinue
           & $iscc /DMyAppVersion="$ver" /DStagingDir="$stagingAbs" /O"installer-out" tools/installer/windows/setup.iss
           $exe = Get-ChildItem installer-out/*.exe | Select-Object -First 1
           (Get-FileHash $exe.FullName -Algorithm SHA256).Hash + "  $($exe.Name)" | Out-File "$($exe.FullName).sha256" -Encoding ascii
