@@ -187,8 +187,10 @@ bool ledLoadPresetsJson(const String& json) {
                                                        WS2812_LED_COUNT - 1);
                     ledPersist();
                 }
-                Serial.printf("LED master state applied (rev=%u): mode=%s\n",
-                              (unsigned)rev, modeStr.c_str());
+                Serial.printf("LED master state applied (rev=%u): mode=%s color=#%06lX bright=%u\n",
+                              (unsigned)rev, modeStr.c_str(),
+                              (unsigned long)((ledColor.r << 16) | (ledColor.g << 8) | ledColor.b),
+                              ledBrightness);
             }
         }
     }
@@ -430,11 +432,11 @@ void ledPump() {
     uint32_t now = millis();
     if (now - ledLastTick < 25) return;
     ledLastTick = now;
-    if (ledMode == LED_MODE_SOLID) {
-        FastLED.setBrightness(ledBrightness);
-        FastLED.show();
-        return;
-    }
+
+    // Always render into wsLeds before showing. A previous fast-path skipped
+    // ledRenderFrame() for LED_MODE_SOLID, so switching to solid (or changing
+    // its color) just re-displayed the last animation frame: the panel looked
+    // stuck on the old effect and solid color appeared "not working".
     ledRenderFrame();
     FastLED.setBrightness(ledBrightness);
     FastLED.show();

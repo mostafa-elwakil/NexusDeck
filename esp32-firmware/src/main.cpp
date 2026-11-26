@@ -468,7 +468,7 @@ String homeClockHM();
 
 // Build tag shown on the boot screen + Serial so the flashed version is
 // visible on the device itself (no serial monitor needed to tell versions).
-const char* FW_TAG = "touch-v16d-homefix";
+const char* FW_TAG = "touch-v16f-ledsync";
 
 // ===== Setup =====
 void setup() {
@@ -2250,11 +2250,13 @@ static void parseUpdateNotice(const String& payload) {
 // ===== WLED-style LED preset sync (cheap GET, once per sync cycle) =====
 void ledSyncPresets() {
     if (!wifiConnected) return;
-    // Throttled: this rides on the 3s sync cycle, but the preset list and
-    // update notice change rarely — a 5s-timeout GET every 3s froze the
-    // loop and made the deck feel laggy.
+    // This payload also carries the master light state (color/effect/power
+    // from the Studio Light panel). A 45 s throttle made panel changes look
+    // broken ("solid color not working"): the new color only arrived after a
+    // long wait. Ride the normal ~3 s sync instead; the GET is tiny and the
+    // server caches the GitHub update probe.
     static unsigned long lastLedSync = 0;
-    if (millis() - lastLedSync < 45000) return;
+    if (millis() - lastLedSync < 2500) return;
     lastLedSync = millis();
     HTTPClient presetsHttp;
     presetsHttp.setTimeout(1500);
