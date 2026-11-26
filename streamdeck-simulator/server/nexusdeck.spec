@@ -69,4 +69,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=os.path.join(SPECPATH, 'assets', 'nexusdeck.ico'),
+    version=os.path.join(SPECPATH, 'version_info.txt'),
 )

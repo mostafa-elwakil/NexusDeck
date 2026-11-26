@@ -1,0 +1,41 @@
+# PyInstaller Windows version resource for NexusDeckCompanion.exe
+# Gives Explorer / Task Manager / SmartScreen a real company + product name
+# instead of a blank "Publisher" field.
+#
+# Keep the numeric version in sync with SERVER_VERSION in server.py
+# (build.py / CI pass an override with -DVERSION=... if needed).
+VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=(2, 4, 12, 0),
+        prodvers=(2, 4, 12, 0),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    '040904B0',
+                    [
+                        StringStruct('CompanyName', 'Mostafa Elwakil'),
+                        StringStruct('Publisher', 'Mostafa Elwakil'),
+                        StringStruct('ProductName', 'NexusDeck'),
+                        StringStruct('FileDescription', 'NexusDeck Companion Server'),
+                        StringStruct('InternalName', 'NexusDeckCompanion'),
+                        StringStruct('OriginalFilename', 'NexusDeckCompanion.exe'),
+                        StringStruct('LegalCopyright', 'Copyright (C) 2026 Mostafa Elwakil'),
+                        StringStruct('LegalTrademarks', 'NexusDeck'),
+                        StringStruct('FileVersion', '2.4.12'),
+                        StringStruct('ProductVersion', '2.4.12'),
+                        StringStruct('Comments', 'Publisher: Mostafa Elwakil'),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+    ],
+)
