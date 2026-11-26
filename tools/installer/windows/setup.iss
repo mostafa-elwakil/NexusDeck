@@ -22,7 +22,9 @@ AppCopyright=Copyright (C) 2026 Mostafa Elwakil
 VersionInfoCompany=Mostafa Elwakil
 VersionInfoDescription=NexusDeck Setup
 VersionInfoProductName=NexusDeck
-VersionInfoProductVersion={#MyAppVersion}
+; MyAppVersion is a tag name ("v2.4.12" / "dev"), and the VersionInfo*Version
+; directives only accept numeric values, so only the text version is set.
+VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCopyright=Copyright (C) 2026 Mostafa Elwakil
 DefaultDirName={localappdata}\Programs\NexusDeck
 DefaultGroupName=NexusDeck
