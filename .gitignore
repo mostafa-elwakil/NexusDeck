@@ -61,3 +61,5 @@ ing/
 tests/
 .agents/
 .tmp-debate/
+# serial logger output (generated)
+tools/serial-log.txt
